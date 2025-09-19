@@ -1,1 +1,533 @@
-# whoisdede.github.io
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stereo Burger - O Sabor que Toca Alto!</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;900&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body {
+            font-family: 'Poppins', sans-serif;
+        }
+        /* Custom scrollbar for better aesthetics */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #dc2626;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #b91c1c;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+
+    <!-- Header -->
+    <header class="bg-white shadow-md sticky top-0 z-40">
+        <nav class="container mx-auto px-6 py-3 flex justify-between items-center">
+            <a href="#home" class="text-3xl font-bold text-red-600 nav-link">Stereo<span class="text-gray-800">Burger</span></a>
+            <div class="hidden md:flex space-x-8 items-center">
+                <a href="#home" class="text-gray-700 hover:text-red-600 transition duration-300 nav-link">Apresentação</a>
+                <a href="#menu" class="text-gray-700 hover:text-red-600 transition duration-300 nav-link">Cardápio</a>
+            </div>
+            <button id="cart-button" class="relative">
+                <i data-lucide="shopping-cart" class="text-gray-800"></i>
+                <span id="cart-count" class="absolute -top-2 -right-2 bg-red-600 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center">0</span>
+            </button>
+        </nav>
+    </header>
+
+    <main id="main-content">
+        <!-- Home/Presentation Section -->
+        <section id="page-home" class="container mx-auto px-6 py-8">
+            <div class="bg-white rounded-lg shadow-xl overflow-hidden">
+                <div class="md:flex">
+                    <div class="md:w-1/2">
+                        <img class="h-64 w-full object-cover md:h-full" src="https://placehold.co/800x600/dc2626/FFFFFF?text=Stereo+Burger" alt="[Imagem de um hambúrguer suculento da Stereo Burger]">
+                    </div>
+                    <div class="p-8 md:w-1/2 flex flex-col justify-center">
+                        <h1 class="text-4xl font-black text-gray-800 mb-4">O Sabor que <span class="text-red-600">Toca Alto!</span></h1>
+                        <p class="text-gray-600 mb-6">
+                            Nascemos da paixão por música e hambúrgueres de verdade. A Stereo Burger é mais que um food trailer, é uma experiência sobre rodas! Combinamos ingredientes frescos, receitas exclusivas e uma playlist incrível para criar o lanche perfeito para cada momento.
+                        </p>
+                        <a href="#menu" class="bg-red-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-red-700 transition duration-300 w-fit nav-link">Veja nosso cardápio</a>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-12">
+                <h2 class="text-3xl font-bold text-center text-gray-800 mb-8">Nossa Galeria</h2>
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <img src="https://placehold.co/600x400/1f2937/FFFFFF?text=Nosso+Trailer" alt="[Imagem do trailer da Stereo Burger]" class="rounded-lg shadow-lg">
+                    <img src="https://placehold.co/600x400/f87171/FFFFFF?text=Batatas+Fritas" alt="[Imagem de batatas fritas crocantes]" class="rounded-lg shadow-lg">
+                    <img src="https://placehold.co/600x400/4b5563/FFFFFF?text=Clientes+Felizes" alt="[Imagem de clientes satisfeitos]" class="rounded-lg shadow-lg">
+                </div>
+            </div>
+        </section>
+
+        <!-- Menu "Page" -->
+        <section id="page-menu" class="hidden">
+             <div class="container mx-auto px-6 py-8">
+                <button id="back-to-home-btn" class="mb-6 bg-white text-gray-700 font-bold py-2 px-4 rounded-lg hover:bg-gray-200 transition duration-300 flex items-center space-x-2 shadow">
+                    <i data-lucide="arrow-left" class="w-5 h-5"></i>
+                    <span>Voltar</span>
+                </button>
+                <h2 class="text-4xl font-black text-center text-gray-800 mb-2">Nosso <span class="text-red-600">Cardápio</span></h2>
+                <p class="text-center text-gray-500 mb-10">Escolha seus favoritos e monte seu pedido!</p>
+                <div id="menu-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-6">
+                    <!-- Menu items will be injected here by JavaScript -->
+                </div>
+             </div>
+        </section>
+    </main>
+    
+    <!-- Cart Sidebar -->
+    <div id="cart-sidebar" class="fixed top-0 right-0 h-full w-full md:w-96 bg-white shadow-2xl transform translate-x-full transition-transform duration-300 ease-in-out z-50 flex flex-col">
+        <div class="p-4 flex justify-between items-center border-b">
+            <h3 class="text-xl font-bold text-gray-800">Seu Pedido</h3>
+            <button id="close-cart-button"><i data-lucide="x" class="text-gray-600"></i></button>
+        </div>
+        <div id="cart-items-container" class="flex-grow p-4 overflow-y-auto">
+            <!-- Cart items will be injected here -->
+            <p id="empty-cart-message" class="text-gray-500 text-center mt-8">Seu carrinho está vazio.</p>
+        </div>
+        <div class="p-4 border-t bg-gray-50">
+            <div class="space-y-2 mb-4 text-sm">
+                <div class="flex justify-between">
+                    <span>Subtotal:</span>
+                    <span id="cart-subtotal">R$ 0,00</span>
+                </div>
+                <div class="flex justify-between">
+                    <span>Taxa de Entrega:</span>
+                    <span id="cart-delivery-fee">A calcular</span>
+                </div>
+                <div class="flex justify-between font-bold text-lg">
+                    <span>Total:</span>
+                    <span id="cart-total">R$ 0,00</span>
+                </div>
+            </div>
+            <button id="checkout-button" class="w-full bg-red-600 text-white font-bold py-3 rounded-lg hover:bg-red-700 transition duration-300 disabled:bg-gray-400 disabled:cursor-not-allowed">
+                Finalizar Compra
+            </button>
+        </div>
+    </div>
+
+    <!-- Checkout Modal -->
+    <div id="checkout-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center p-4">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col">
+             <div class="p-4 flex justify-between items-center border-b">
+                <h3 class="text-xl font-bold text-gray-800">Informações de Entrega</h3>
+                <button id="close-modal-button"><i data-lucide="x" class="text-gray-600"></i></button>
+            </div>
+            <div class="p-6 overflow-y-auto">
+                <form id="checkout-form" class="space-y-4">
+                    <div>
+                        <label for="name" class="block text-sm font-medium text-gray-700">Nome Completo</label>
+                        <input type="text" id="name" name="name" required class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-red-500 focus:border-red-500">
+                    </div>
+                     <div>
+                        <label for="phone" class="block text-sm font-medium text-gray-700">Telefone (WhatsApp)</label>
+                        <input type="tel" id="phone" name="phone" required placeholder="(99) 99999-9999" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-red-500 focus:border-red-500">
+                    </div>
+                     <div>
+                        <label for="email" class="block text-sm font-medium text-gray-700">Email</label>
+                        <input type="email" id="email" name="email" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-red-500 focus:border-red-500">
+                    </div>
+
+                    <fieldset class="pt-4 border-t">
+                        <legend class="text-lg font-semibold text-gray-800 mb-2">Endereço de Entrega</legend>
+                        <div class="grid grid-cols-3 gap-4">
+                             <div class="col-span-3 sm:col-span-1">
+                                <label for="cep" class="block text-sm font-medium text-gray-700">CEP</label>
+                                <input type="text" id="cep" name="cep" required placeholder="00000-000" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-red-500 focus:border-red-500">
+                             </div>
+                            <div class="col-span-2 sm:col-span-2 flex items-end">
+                                <button type="button" id="search-cep-button" class="w-full bg-gray-800 text-white font-bold py-2 px-4 rounded-lg hover:bg-gray-900 transition duration-300">Buscar CEP</button>
+                            </div>
+                        </div>
+                        <p id="cep-status" class="text-sm mt-1 h-4"></p>
+                        
+                        <div class="mt-2">
+                             <label for="street" class="block text-sm font-medium text-gray-700">Rua</label>
+                             <input type="text" id="street" name="street" required class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-red-500 focus:border-red-500 bg-gray-100" readonly>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4 mt-4">
+                             <div>
+                                <label for="number" class="block text-sm font-medium text-gray-700">Número</label>
+                                <input type="text" id="number" name="number" required class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-red-500 focus:border-red-500">
+                             </div>
+                             <div>
+                                <label for="complement" class="block text-sm font-medium text-gray-700">Complemento</label>
+                                <input type="text" id="complement" name="complement" class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-red-500 focus:border-red-500">
+                             </div>
+                        </div>
+                         <div class="mt-4">
+                             <label for="neighborhood" class="block text-sm font-medium text-gray-700">Bairro</label>
+                             <input type="text" id="neighborhood" name="neighborhood" required class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-red-500 focus:border-red-500 bg-gray-100" readonly>
+                        </div>
+                        <div class="grid grid-cols-3 gap-4 mt-4">
+                             <div class="col-span-2">
+                                <label for="city" class="block text-sm font-medium text-gray-700">Cidade</label>
+                                <input type="text" id="city" name="city" required class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-red-500 focus:border-red-500 bg-gray-100" readonly>
+                             </div>
+                             <div>
+                                <label for="state" class="block text-sm font-medium text-gray-700">Estado</label>
+                                <input type="text" id="state" name="state" required class="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:ring-red-500 focus:border-red-500 bg-gray-100" readonly>
+                             </div>
+                        </div>
+                    </fieldset>
+                </form>
+            </div>
+            <div class="p-4 border-t bg-gray-50">
+                 <button type="submit" form="checkout-form" class="w-full bg-green-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-green-600 transition duration-300 flex items-center justify-center space-x-2">
+                    <i data-lucide="send"></i>
+                    <span>Enviar Pedido pelo WhatsApp</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            lucide.createIcons();
+
+            const STEREO_BURGER_WHATSAPP_NUMBER = "5511999999999"; // SUBSTITUA PELO NÚMERO DA HAMBURGUERIA
+
+            const menuItems = [
+                { id: 1, name: 'Classic Rock', description: 'Pão brioche, burger 150g, cheddar, alface, tomate, molho especial.', price: 25.00, image: 'https://placehold.co/400x300/dc2626/FFFFFF?text=Classic+Rock' },
+                { id: 2, name: 'Pop Hits Bacon', description: 'Pão australiano, burger 150g, queijo prato, bacon, maionese de alho.', price: 28.50, image: 'https://placehold.co/400x300/ef4444/FFFFFF?text=Pop+Hits+Bacon' },
+                { id: 3, name: 'Indie Burger', description: 'Pão de batata, burger vegetariano, muçarela, rúcula, tomate seco.', price: 27.00, image: 'https://placehold.co/400x300/f87171/FFFFFF?text=Indie+Burger' },
+                { id: 4, name: 'Heavy Metal Double', description: 'Pão brioche, 2x burgers 150g, duplo cheddar, picles, cebola roxa.', price: 35.00, image: 'https://placehold.co/400x300/b91c1c/FFFFFF?text=Heavy+Metal' },
+                { id: 5, name: 'Batata Frita Solo', description: 'Porção individual de batatas fritas crocantes com páprica.', price: 12.00, image: 'https://placehold.co/400x300/fb923c/FFFFFF?text=Batata+Solo' },
+                { id: 6, name: 'Refri em Lata', description: 'Coca-Cola, Guaraná Antarctica ou Soda Limonada.', price: 6.00, image: 'https://placehold.co/400x300/6b7280/FFFFFF?text=Refri' }
+            ];
+
+            let cart = [];
+            let deliveryFee = 0;
+
+            // Page elements
+            const pageHome = document.getElementById('page-home');
+            const pageMenu = document.getElementById('page-menu');
+            const backToHomeBtn = document.getElementById('back-to-home-btn');
+            const navLinks = document.querySelectorAll('.nav-link');
+
+            // Menu elements
+            const menuGrid = document.getElementById('menu-grid');
+
+            // Cart elements
+            const cartButton = document.getElementById('cart-button');
+            const closeCartButton = document.getElementById('close-cart-button');
+            const cartSidebar = document.getElementById('cart-sidebar');
+            const cartCount = document.getElementById('cart-count');
+            const cartItemsContainer = document.getElementById('cart-items-container');
+            const emptyCartMessage = document.getElementById('empty-cart-message');
+            const cartSubtotalEl = document.getElementById('cart-subtotal');
+            const cartDeliveryFeeEl = document.getElementById('cart-delivery-fee');
+            const cartTotalEl = document.getElementById('cart-total');
+            
+            // Checkout elements
+            const checkoutButton = document.getElementById('checkout-button');
+            const checkoutModal = document.getElementById('checkout-modal');
+            const closeModalButton = document.getElementById('close-modal-button');
+            const searchCepButton = document.getElementById('search-cep-button');
+            const checkoutForm = document.getElementById('checkout-form');
+
+            // --- Page Navigation ---
+            function showPage(pageName) {
+                if (pageName === 'menu') {
+                    pageHome.classList.add('hidden');
+                    pageMenu.classList.remove('hidden');
+                    window.scrollTo(0, 0);
+                } else {
+                    pageMenu.classList.add('hidden');
+                    pageHome.classList.remove('hidden');
+                }
+            }
+
+            // --- Menu Rendering ---
+            function renderMenu() {
+                menuGrid.innerHTML = '';
+                menuItems.forEach(item => {
+                    const card = document.createElement('div');
+                    card.className = 'bg-white rounded-lg shadow-lg overflow-hidden flex flex-col';
+                    card.innerHTML = `
+                        <img src="${item.image}" alt="${item.name}" class="w-full h-40 object-cover">
+                        <div class="p-3 flex-grow flex flex-col">
+                            <h3 class="text-lg font-bold text-gray-800">${item.name}</h3>
+                            <p class="text-gray-600 text-xs mt-1 flex-grow">${item.description}</p>
+                            <p class="text-xl font-black text-red-600 mt-3">R$ ${item.price.toFixed(2).replace('.', ',')}</p>
+                        </div>
+                        <div class="p-3 bg-gray-50">
+                             <textarea id="obs-${item.id}" class="w-full border-gray-300 rounded-md shadow-sm text-xs p-2 mb-2" rows="2" placeholder="Alguma observação?"></textarea>
+                             <button data-item-id="${item.id}" class="add-to-cart-btn w-full bg-gray-800 text-white font-bold py-2 px-4 rounded-lg hover:bg-gray-900 transition duration-300 text-sm">
+                                Adicionar
+                            </button>
+                        </div>
+                    `;
+                    menuGrid.appendChild(card);
+                });
+            }
+
+            // --- Cart Logic ---
+            function addToCart(itemId, observation) {
+                const item = menuItems.find(i => i.id === itemId);
+                const existingItemIndex = cart.findIndex(cartItem => cartItem.id === itemId && cartItem.observation === observation);
+
+                if (existingItemIndex > -1) {
+                    cart[existingItemIndex].quantity++;
+                } else {
+                    cart.push({ ...item, quantity: 1, observation, cartItemId: Date.now() });
+                }
+                updateCart();
+                openCartSidebar();
+            }
+            
+            function updateCartItemQuantity(cartItemId, change) {
+                const itemIndex = cart.findIndex(i => i.cartItemId === cartItemId);
+                if (itemIndex > -1) {
+                    cart[itemIndex].quantity += change;
+                    if (cart[itemIndex].quantity <= 0) {
+                        cart.splice(itemIndex, 1);
+                    }
+                }
+                updateCart();
+            }
+
+            function renderCart() {
+                cartItemsContainer.innerHTML = '';
+                if (cart.length === 0) {
+                    cartItemsContainer.appendChild(emptyCartMessage);
+                    emptyCartMessage.classList.remove('hidden');
+                    return;
+                }
+                
+                emptyCartMessage.classList.add('hidden');
+                
+                cart.forEach(item => {
+                    const cartItemEl = document.createElement('div');
+                    cartItemEl.className = 'flex items-start justify-between py-4 border-b last:border-b-0';
+                    cartItemEl.innerHTML = `
+                        <div class="flex-grow pr-4">
+                            <p class="font-bold text-gray-800">${item.name}</p>
+                            ${item.observation ? `<p class="text-xs text-gray-500 italic">OBS: ${item.observation}</p>` : ''}
+                            <p class="text-red-600 font-semibold mt-1">R$ ${item.price.toFixed(2).replace('.', ',')}</p>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                             <button class="quantity-change-btn p-1 rounded-full bg-gray-200 hover:bg-gray-300" data-cart-item-id="${item.cartItemId}" data-change="-1"><i data-lucide="minus" class="w-4 h-4"></i></button>
+                             <span class="font-bold w-6 text-center">${item.quantity}</span>
+                            <button class="quantity-change-btn p-1 rounded-full bg-gray-200 hover:bg-gray-300" data-cart-item-id="${item.cartItemId}" data-change="1"><i data-lucide="plus" class="w-4 h-4"></i></button>
+                        </div>
+                    `;
+                    cartItemsContainer.appendChild(cartItemEl);
+                });
+                lucide.createIcons();
+            }
+
+            function updateCart() {
+                renderCart();
+                const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
+                cartCount.textContent = totalItems;
+                
+                const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+                const total = subtotal + deliveryFee;
+
+                cartSubtotalEl.textContent = `R$ ${subtotal.toFixed(2).replace('.', ',')}`;
+                if(deliveryFee > 0) {
+                    cartDeliveryFeeEl.textContent = `R$ ${deliveryFee.toFixed(2).replace('.', ',')}`;
+                } else if(document.getElementById('neighborhood').value) {
+                     cartDeliveryFeeEl.textContent = 'Grátis';
+                } else {
+                     cartDeliveryFeeEl.textContent = 'A calcular';
+                }
+                cartTotalEl.textContent = `R$ ${total.toFixed(2).replace('.', ',')}`;
+
+                checkoutButton.disabled = cart.length === 0;
+            }
+            
+            function openCartSidebar() {
+                cartSidebar.classList.remove('translate-x-full');
+            }
+            
+            function closeCartSidebar() {
+                cartSidebar.classList.add('translate-x-full');
+            }
+            
+            // --- CEP & Delivery Fee ---
+            async function fetchAddress(cep) {
+                const cepStatus = document.getElementById('cep-status');
+                try {
+                    cepStatus.textContent = 'Buscando...';
+                    cepStatus.classList.remove('text-red-500');
+                    cepStatus.classList.add('text-gray-500');
+
+                    const response = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+                    if (!response.ok) throw new Error('CEP não encontrado.');
+                    
+                    const data = await response.json();
+                    if(data.erro) throw new Error('CEP inválido.');
+
+                    document.getElementById('street').value = data.logradouro;
+                    document.getElementById('neighborhood').value = data.bairro;
+                    document.getElementById('city').value = data.localidade;
+                    document.getElementById('state').value = data.uf;
+                    cepStatus.textContent = 'Endereço encontrado!';
+                    cepStatus.classList.remove('text-gray-500');
+                    cepStatus.classList.add('text-green-600');
+                    
+                    calculateDeliveryFee(data.bairro);
+                    updateCart();
+
+                } catch(error) {
+                    cepStatus.textContent = error.message;
+                    cepStatus.classList.remove('text-green-600');
+                    cepStatus.classList.add('text-red-500');
+                    clearAddressFields();
+                    deliveryFee = 0;
+                    updateCart();
+                }
+            }
+
+            function clearAddressFields() {
+                ['street', 'neighborhood', 'city', 'state'].forEach(id => document.getElementById(id).value = '');
+            }
+
+            // SIMULAÇÃO DE CÁLCULO DE FRETE POR BAIRRO
+            function calculateDeliveryFee(neighborhood) {
+                const feeMap = {
+                    'centro': 5.00,
+                    'jardins': 7.00,
+                    'vila madalena': 8.00,
+                    'pinheiros': 7.50
+                };
+                const normalizedNeighborhood = neighborhood.toLowerCase().trim();
+                deliveryFee = feeMap[normalizedNeighborhood] || 10.00; // Taxa padrão para outros bairros
+            }
+            
+            // --- Modal Logic ---
+            function openCheckoutModal() {
+                 checkoutModal.classList.remove('hidden');
+                 checkoutModal.classList.add('flex');
+            }
+
+            function closeCheckoutModal() {
+                checkoutModal.classList.add('hidden');
+                checkoutModal.classList.remove('flex');
+            }
+
+            // --- WhatsApp Message ---
+            function generateWhatsAppMessage() {
+                const name = document.getElementById('name').value;
+                const phone = document.getElementById('phone').value;
+                const street = document.getElementById('street').value;
+                const number = document.getElementById('number').value;
+                const complement = document.getElementById('complement').value;
+                const neighborhood = document.getElementById('neighborhood').value;
+                const city = document.getElementById('city').value;
+
+                let message = `*Olá, Stereo Burger!* 🍔🎶\n\n`;
+                message += `Gostaria de fazer o seguinte pedido:\n\n`;
+                
+                cart.forEach(item => {
+                    message += `*${item.quantity}x ${item.name}*\n`;
+                    if (item.observation) {
+                        message += `  _OBS: ${item.observation}_\n`;
+                    }
+                });
+
+                message += `\n------------------------\n`;
+                message += `*Subtotal:* R$ ${cartSubtotalEl.textContent.replace('R$ ', '')}\n`;
+                message += `*Taxa de Entrega:* R$ ${cartDeliveryFeeEl.textContent.replace('R$ ', '')}\n`;
+                message += `*TOTAL:* *R$ ${cartTotalEl.textContent.replace('R$ ', '')}*\n`;
+                message += `------------------------\n\n`;
+
+                message += `*Dados para Entrega:*\n`;
+                message += `*Nome:* ${name}\n`;
+                message += `*Telefone:* ${phone}\n`;
+                message += `*Endereço:* ${street}, Nº ${number}${complement ? ' - ' + complement : ''}, ${neighborhood} - ${city}\n\n`;
+                message += `Aguardando a confirmação do meu pedido! Obrigado!`;
+                
+                return encodeURIComponent(message);
+            }
+
+            // --- Event Listeners ---
+            navLinks.forEach(link => {
+                link.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const pageName = new URL(link.href).hash.substring(1);
+                    showPage(pageName);
+                });
+            });
+
+            backToHomeBtn.addEventListener('click', () => showPage('home'));
+
+            menuGrid.addEventListener('click', e => {
+                const button = e.target.closest('.add-to-cart-btn');
+                if(button) {
+                    const itemId = parseInt(button.dataset.itemId);
+                    const observation = document.getElementById(`obs-${itemId}`).value;
+                    addToCart(itemId, observation);
+                }
+            });
+            
+            cartButton.addEventListener('click', openCartSidebar);
+            closeCartButton.addEventListener('click', closeCartSidebar);
+            
+            checkoutButton.addEventListener('click', () => {
+                if (cart.length > 0) {
+                    closeCartSidebar();
+                    openCheckoutModal();
+                }
+            });
+
+            closeModalButton.addEventListener('click', closeCheckoutModal);
+
+            cartItemsContainer.addEventListener('click', e => {
+                const button = e.target.closest('.quantity-change-btn');
+                if (button) {
+                    const cartItemId = parseInt(button.dataset.cartItemId);
+                    const change = parseInt(button.dataset.change);
+                    updateCartItemQuantity(cartItemId, change);
+                }
+            });
+
+            searchCepButton.addEventListener('click', () => {
+                const cepInput = document.getElementById('cep');
+                const cep = cepInput.value.replace(/\D/g, ''); // Remove non-digit chars
+                if (cep.length === 8) {
+                    fetchAddress(cep);
+                } else {
+                    document.getElementById('cep-status').textContent = 'Por favor, insira um CEP válido.';
+                    document.getElementById('cep-status').classList.add('text-red-500');
+                }
+            });
+
+            checkoutForm.addEventListener('submit', e => {
+                e.preventDefault();
+                const message = generateWhatsAppMessage();
+                const whatsappUrl = `https://api.whatsapp.com/send?phone=${STEREO_BURGER_WHATSAPP_NUMBER}&text=${message}`;
+                window.open(whatsappUrl, '_blank');
+                
+                // Optional: clear cart and close modal after sending
+                cart = [];
+                deliveryFee = 0;
+                updateCart();
+                closeCheckoutModal();
+            });
+
+            // --- Initial Load ---
+            renderMenu();
+            updateCart();
+        });
+    </script>
+</body>
+</html>
+
