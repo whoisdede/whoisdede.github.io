@@ -6,11 +6,14 @@
 
   const STORAGE_KEYS = {
     data: 'ranking_natalino_data_v1',
-    supabase: 'ranking_natalino_supabase_v1',
-    apiUrl: 'ranking_natalino_api_url_v1',
-    lastPerson: 'ranking_natalino_last_person_v1',
-    bannerDismissed: 'ranking_natalino_banner_dismissed_v1'
+    lastPerson: 'ranking_natalino_last_person_v1'
   };
+
+  const LEGACY_STORAGE_KEYS = [
+    'ranking_natalino_supabase_v1',
+    'ranking_natalino_api_url_v1',
+    'ranking_natalino_banner_dismissed_v1'
+  ];
 
   const CHART_PALETTE = [
     '#14452f', // Pine
@@ -26,11 +29,13 @@
     votes: [],
     activeTab: 'dashboard',
     selectedWeekFilter: 'latest', // number | 'all'
-    backend: { type: 'local' }, // { type: 'local' } | { type: 'supabase', url, key, source } | { type: 'sheets', url, source }
-    connectionStatus: 'local', // 'local' | 'connected' | 'syncing' | 'error'
+    backend: null, // { type: 'supabase', url, key }
+    connectionStatus: 'syncing', // 'syncing' | 'connected' | 'error'
     lastSyncError: '',
     editingWeekOriginal: null,
     slidersTouched: false,
+    commentTouched: false,
+    loadedExistingVote: false,
     pendingConfirmAction: null
   };
 
@@ -85,57 +90,6 @@
   function mean(values) {
     if (!values.length) return null;
     return values.reduce((acc, v) => acc + v, 0) / values.length;
-  }
-
-  function normalizeAppsScriptUrl(rawUrl) {
-    let url = String(rawUrl || '').trim();
-    if (!url) return '';
-    // Remove prefixo multi-conta (/macros/u/0/s/ -> /macros/s/)
-    url = url.replace(/\/macros\/u\/\d+\/s\//i, '/macros/s/');
-    url = url.replace(/\/a\/macros\/([^/]+)\/u\/\d+\/s\//i, '/a/macros/$1/s/');
-    return url;
-  }
-
-  function validateAppsScriptUrl(rawUrl) {
-    const url = normalizeAppsScriptUrl(rawUrl);
-    if (!url) {
-      return { ok: false, url: '', reason: 'Cole a URL do Web App antes de testar.' };
-    }
-    let parsed;
-    try {
-      parsed = new URL(url);
-    } catch (_) {
-      return { ok: false, url, reason: 'URL inválida. Verifique se copiou o link completo começando com https://.' };
-    }
-    if (parsed.protocol !== 'https:') {
-      return { ok: false, url, reason: 'A URL precisa começar com https://.' };
-    }
-    if (parsed.hostname === 'docs.google.com') {
-      return {
-        ok: false,
-        url,
-        reason: 'Essa é a URL da planilha, não do Web App. Vá em Extensões → Apps Script → Implantar → App da Web e copie a URL terminada em /exec.'
-      };
-    }
-    if (parsed.hostname !== 'script.google.com') {
-      return {
-        ok: false,
-        url,
-        reason: 'A URL deve pertencer a script.google.com (terminada em /exec).'
-      };
-    }
-    if (/\/dev(\?|$)/i.test(parsed.pathname)) {
-      return {
-        ok: false,
-        url,
-        reason: 'Você colou a URL de teste (/dev). Use a URL da implantação final terminada em /exec.'
-      };
-    }
-    return { ok: true, url };
-  }
-
-  function isValidAppsScriptUrl(url) {
-    return validateAppsScriptUrl(url).ok;
   }
 
   function normalizePayload(raw) {
@@ -335,28 +289,24 @@
       /relation .* does not exist/i.test(msg) ||
       /could not find the table/i.test(msg)
     ) {
-      const err = new Error(
-        'As tabelas ainda não existem nesse projeto Supabase. Clique em "Copiar SQL (supabase/schema.sql)", cole no SQL Editor do Supabase e clique em Run.'
-      );
+      const err = new Error('As tabelas do ranking não foram encontradas no banco de dados.');
       err.code = 'MISSING_TABLES';
       return err;
     }
 
     if (res.status === 401 || res.status === 403 || code === '42501') {
-      const err = new Error(
-        'Chave recusada ou sem permissão RLS (HTTP 401/403). Confirme a Project URL, a chave pública (Publishable ou anon) e se todo o schema.sql (incluindo as policies) foi executado.'
-      );
+      const err = new Error('Sem permissão de acesso ao banco de dados (HTTP 401/403).');
       err.code = 'AUTH_OR_RLS';
       return err;
     }
 
     if (code === '23503') {
-      const err = new Error('A semana selecionada ainda não está cadastrada no Supabase.');
+      const err = new Error('A semana selecionada ainda não está cadastrada no banco de dados.');
       err.code = 'FK_WEEK_MISSING';
       return err;
     }
 
-    return new Error(msg || `Erro HTTP ${res.status} no Supabase`);
+    return new Error(msg || `Erro HTTP ${res.status} no servidor`);
   }
 
   async function supabaseRequest(baseUrl, key, path, { method = 'GET', body, headers = {} } = {}) {
@@ -466,206 +416,44 @@
     };
   }
 
-  async function supabaseImportAll(baseUrl, key, rawWeeks, rawVotes) {
-    const clean = normalizePayload({ weeks: rawWeeks, votes: rawVotes });
-    const nowIso = new Date().toISOString();
-
-    if (clean.weeks.length > 0) {
-      const weekRows = clean.weeks.map((w) => ({
-        week: w.week,
-        chocotone: w.chocotone,
-        brand: w.brand || '',
-        notes: w.notes || '',
-        updated_at: nowIso
-      }));
-      await supabaseRequest(baseUrl, key, 'chocotone_weeks?on_conflict=week', {
-        method: 'POST',
-        headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-        body: weekRows
-      });
-    }
-
-    if (clean.votes.length > 0) {
-      const voteRows = clean.votes.map((v) => ({
-        week: v.week,
-        person: v.person,
-        sabor: v.sabor,
-        recheio: v.recheio,
-        maciez: v.maciez,
-        docura: v.docura,
-        comment: v.comment || '',
-        updated_at: v.updatedAt || nowIso
-      }));
-      await supabaseRequest(baseUrl, key, 'chocotone_votes?on_conflict=week,person_key', {
-        method: 'POST',
-        headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-        body: voteRows
-      });
-    }
-
-    return supabaseGetAll(baseUrl, key);
-  }
-
-  function resolveInitialBackend() {
-    const params = new URLSearchParams(window.location.search);
-    const queryApi = normalizeAppsScriptUrl(params.get('api') || '');
-    if (isValidAppsScriptUrl(queryApi)) {
-      try {
-        localStorage.setItem(STORAGE_KEYS.apiUrl, queryApi);
-      } catch (_) {}
-      const cleanUrl = window.location.pathname + window.location.hash;
-      window.history.replaceState({}, '', cleanUrl);
-      return { type: 'sheets', url: queryApi, source: 'query' };
-    }
-
-    try {
-      const rawSb = localStorage.getItem(STORAGE_KEYS.supabase);
-      if (rawSb) {
-        const parsed = JSON.parse(rawSb);
-        const check = validateSupabaseConfig(parsed && parsed.url, parsed && parsed.key);
-        if (check.ok) {
-          return { type: 'supabase', url: check.url, key: check.key, source: 'storage' };
-        }
-      }
-    } catch (_) {}
-
-    const cfgSbCheck = validateSupabaseConfig(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
-    if (cfgSbCheck.ok) {
-      return { type: 'supabase', url: cfgSbCheck.url, key: cfgSbCheck.key, source: 'config' };
-    }
-
-    try {
-      const storedUrl = normalizeAppsScriptUrl(localStorage.getItem(STORAGE_KEYS.apiUrl) || '');
-      if (isValidAppsScriptUrl(storedUrl)) {
-        return { type: 'sheets', url: storedUrl, source: 'storage' };
-      }
-    } catch (_) {}
-
-    const cfgUrl = normalizeAppsScriptUrl(CONFIG.APPS_SCRIPT_URL || '');
-    if (isValidAppsScriptUrl(cfgUrl)) {
-      return { type: 'sheets', url: cfgUrl, source: 'config' };
-    }
-
-    return { type: 'local' };
-  }
-
-  async function apiGetAllSingle(url) {
-    const sep = url.includes('?') ? '&' : '?';
-    const res = await fetch(`${url}${sep}action=getAll&_ts=${Date.now()}`, {
-      method: 'GET'
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const text = await res.text();
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch (_) {
-      throw new Error('A URL não retornou JSON válido (verifique se ela termina em /exec e está liberada para "Qualquer pessoa").');
-    }
-    if (!data || !data.ok) throw new Error((data && data.error) || 'Resposta inválida da planilha');
-    return { payload: normalizePayload(data), effectiveUrl: url };
-  }
-
-  async function apiGetAll(url) {
-    const cleanUrl = normalizeAppsScriptUrl(url);
-    try {
-      const { payload } = await apiGetAllSingle(cleanUrl);
-      return payload;
-    } catch (err) {
-      // Se for URL Workspace (/a/macros/dominio/s/...), tenta também a rota padrão /macros/s/...
-      if (/\/a\/macros\/[^/]+\/s\//i.test(cleanUrl)) {
-        const altUrl = cleanUrl.replace(/\/a\/macros\/[^/]+\/s\//i, '/macros/s/');
-        const { payload } = await apiGetAllSingle(altUrl);
-        return payload;
-      }
-      throw err;
-    }
-  }
-
-  async function apiPost(url, payload) {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(payload)
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    if (!data || !data.ok) throw new Error((data && data.error) || 'Falha ao salvar no Google Sheets');
-    return {
-      mode: data.mode || 'ok',
-      ...normalizePayload(data)
-    };
-  }
-
-  function getBackendDisplayName(backend = state.backend) {
-    if (backend && backend.type === 'supabase') return 'Supabase';
-    if (backend && backend.type === 'sheets') return 'Google Sheets';
-    return 'Modo Local';
+  function resolveConfiguredSupabase() {
+    const check = validateSupabaseConfig(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
+    if (!check.ok) return null;
+    return { type: 'supabase', url: check.url, key: check.key };
   }
 
   async function syncFromBackend({ silent = false } = {}) {
-    if (state.backend.type === 'local') {
-      state.connectionStatus = 'local';
+    if (!state.backend) {
+      state.connectionStatus = 'error';
+      state.lastSyncError = 'Banco de dados não configurado em config.js.';
       renderSyncStatus();
+      if (!silent) showToast(state.lastSyncError, 'error');
       return false;
     }
 
-    const label = getBackendDisplayName();
     state.connectionStatus = 'syncing';
     state.lastSyncError = '';
     renderSyncStatus();
 
     try {
-      const payload =
-        state.backend.type === 'supabase'
-          ? await supabaseGetAll(state.backend.url, state.backend.key)
-          : await apiGetAll(state.backend.url);
-
+      const payload = await supabaseGetAll(state.backend.url, state.backend.key);
       state.weeks = payload.weeks;
       state.votes = payload.votes;
       saveLocalData();
       state.connectionStatus = 'connected';
       ensureValidSelectedWeek();
       renderAll();
-      if (!silent) showToast(`Dados atualizados direto do ${label}.`, 'success');
+      if (!silent) showToast('Notas atualizadas!', 'success');
       return true;
     } catch (err) {
       state.connectionStatus = 'error';
       state.lastSyncError = err && err.message ? err.message : 'Erro de conexão';
       renderSyncStatus();
       if (!silent) {
-        showToast(`Não foi possível sincronizar com o ${label}: ${state.lastSyncError}`, 'error');
+        showToast(`Não foi possível atualizar: ${state.lastSyncError}`, 'error');
       }
       return false;
     }
-  }
-
-  async function backendSaveVote(votePayload) {
-    if (state.backend.type === 'supabase') {
-      return supabaseSaveVote(state.backend.url, state.backend.key, votePayload);
-    }
-    return apiPost(state.backend.url, { ...votePayload, action: 'submitVote' });
-  }
-
-  async function backendSaveWeek(weekPayload) {
-    if (state.backend.type === 'supabase') {
-      return supabaseSaveWeek(state.backend.url, state.backend.key, weekPayload);
-    }
-    return apiPost(state.backend.url, { action: 'saveWeek', ...weekPayload });
-  }
-
-  async function backendDeleteVote(weekNum, person) {
-    if (state.backend.type === 'supabase') {
-      return supabaseDeleteVote(state.backend.url, state.backend.key, weekNum, person);
-    }
-    return apiPost(state.backend.url, { action: 'deleteVote', week: weekNum, person });
-  }
-
-  async function backendImportAll(weeks, votes) {
-    if (state.backend.type === 'supabase') {
-      return supabaseImportAll(state.backend.url, state.backend.key, weeks, votes);
-    }
-    return apiPost(state.backend.url, { action: 'syncImport', weeks, votes });
   }
 
   // ---------- Computed Stats ----------
@@ -867,39 +655,28 @@
 
   // ---------- Rendering: Header & Sync Status ----------
   function renderSyncStatus() {
-    const pill = document.getElementById('sync-status-btn');
+    const pill = document.getElementById('sync-status');
     const label = document.getElementById('sync-status-label');
     const refreshBtn = document.getElementById('refresh-btn');
-    const localBanner = document.getElementById('local-banner');
 
     if (!pill || !label) return;
     pill.classList.remove('is-connected', 'is-error');
 
-    const backendType = state.backend.type;
-    const backendLabel = getBackendDisplayName();
-
-    if (backendType === 'local') {
-      label.textContent = 'Modo Local (Demo)';
-      if (refreshBtn) refreshBtn.hidden = true;
-    } else if (state.connectionStatus === 'syncing') {
+    if (state.connectionStatus === 'syncing') {
       label.textContent = 'Sincronizando...';
-      if (refreshBtn) refreshBtn.hidden = false;
+      pill.title = 'Sincronizando com o banco de dados...';
     } else if (state.connectionStatus === 'error') {
       pill.classList.add('is-error');
-      label.textContent = `Erro no ${backendLabel}`;
-      if (refreshBtn) refreshBtn.hidden = false;
+      label.textContent = 'Erro de conexão';
+      pill.title = state.lastSyncError || 'Não foi possível sincronizar com o banco de dados.';
     } else {
       pill.classList.add('is-connected');
-      label.textContent = `${backendLabel} Conectado`;
-      if (refreshBtn) refreshBtn.hidden = false;
+      label.textContent = 'Conectado';
+      pill.title = 'Conectado e sincronizado com o banco de dados compartilhado.';
     }
 
-    if (localBanner) {
-      let dismissed = false;
-      try {
-        dismissed = localStorage.getItem(STORAGE_KEYS.bannerDismissed) === '1';
-      } catch (_) {}
-      localBanner.hidden = backendType !== 'local' || dismissed;
+    if (refreshBtn) {
+      refreshBtn.hidden = !state.backend;
     }
   }
 
@@ -1714,6 +1491,7 @@
           if (personInput) {
             personInput.value = btn.dataset.pickPerson;
             state.slidersTouched = false;
+            state.commentTouched = false;
             syncExistingVoteIntoForm();
             renderVotePeopleOptions();
           }
@@ -1748,6 +1526,10 @@
 
   function prepareVoteForm(options = {}) {
     buildSlidersOnce();
+    if (options.person || options.weekNum != null) {
+      state.slidersTouched = false;
+      state.commentTouched = false;
+    }
     renderVoteWeekSelect(options.weekNum);
     renderVotePeopleOptions();
 
@@ -1755,7 +1537,6 @@
     if (personInput) {
       if (options.person) {
         personInput.value = options.person;
-        state.slidersTouched = false;
       } else if (!personInput.value.trim()) {
         try {
           const last = localStorage.getItem(STORAGE_KEYS.lastPerson) || '';
@@ -1785,9 +1566,22 @@
     if (notice) notice.hidden = !existing;
     if (submitBtn) submitBtn.textContent = existing ? 'Atualizar Avaliação' : 'Salvar Avaliação';
 
-    if (existing && !state.slidersTouched) {
-      CATEGORIES.forEach((cat) => setCategoryInputValue(cat.key, existing[cat.key]));
-      if (commentInput) commentInput.value = existing.comment || '';
+    if (existing) {
+      if (!state.slidersTouched) {
+        CATEGORIES.forEach((cat) => setCategoryInputValue(cat.key, existing[cat.key]));
+      }
+      if (!state.commentTouched && commentInput) {
+        commentInput.value = existing.comment || '';
+      }
+      state.loadedExistingVote = true;
+    } else if (state.loadedExistingVote) {
+      if (!state.slidersTouched) {
+        CATEGORIES.forEach((cat) => setCategoryInputValue(cat.key, 7));
+      }
+      if (!state.commentTouched && commentInput) {
+        commentInput.value = '';
+      }
+      state.loadedExistingVote = false;
     }
   }
 
@@ -1798,6 +1592,11 @@
     const personInput = document.getElementById('vote-person');
     const commentInput = document.getElementById('vote-comment');
     const submitBtn = document.getElementById('submit-vote-btn');
+
+    if (!state.backend) {
+      showToast('Banco de dados não configurado em config.js.', 'error');
+      return;
+    }
 
     const weekNum = parseInt(weekSelect.value, 10);
     const person = personInput.value.trim();
@@ -1812,7 +1611,6 @@
     }
 
     const votePayload = {
-      action: 'submitVote',
       week: weekNum,
       person,
       sabor: clampScore(document.getElementById('range-sabor').value),
@@ -1826,87 +1624,56 @@
       localStorage.setItem(STORAGE_KEYS.lastPerson, person);
     } catch (_) {}
 
-    if (state.backend.type !== 'local') {
-      const backendLabel = getBackendDisplayName();
-      submitBtn.disabled = true;
-      const oldLabel = submitBtn.textContent;
-      submitBtn.textContent = state.backend.type === 'supabase' ? 'Salvando no Supabase...' : 'Salvando na planilha...';
-      try {
-        const res = await backendSaveVote(votePayload);
-        state.weeks = res.weeks;
-        state.votes = res.votes;
-        state.connectionStatus = 'connected';
-        state.lastSyncError = '';
-        saveLocalData();
-        state.slidersTouched = false;
-        renderAll();
-        const weekObj = state.weeks.find((w) => w.week === weekNum);
-        showToast(
-          `Nota de ${person} ${res.mode === 'updated' ? 'atualizada' : 'salva'} para ${weekObj ? weekObj.chocotone : `Semana ${weekNum}`}!`,
-          'success'
-        );
-        switchTab('weeks', { weekNum });
-      } catch (err) {
-        state.connectionStatus = 'error';
-        state.lastSyncError = err && err.message ? err.message : 'Erro ao salvar';
-        renderSyncStatus();
-        showToast(`Erro ao salvar no ${backendLabel}: ${state.lastSyncError}`, 'error');
-      } finally {
-        submitBtn.disabled = false;
-        submitBtn.textContent = oldLabel;
-      }
-      return;
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Salvando...';
+    try {
+      const res = await supabaseSaveVote(state.backend.url, state.backend.key, votePayload);
+      state.weeks = res.weeks;
+      state.votes = res.votes;
+      state.connectionStatus = 'connected';
+      state.lastSyncError = '';
+      saveLocalData();
+      state.slidersTouched = false;
+      state.commentTouched = false;
+      renderAll();
+      const weekObj = state.weeks.find((w) => w.week === weekNum);
+      showToast(
+        `Nota de ${person} ${res.mode === 'updated' ? 'atualizada' : 'salva'} para ${weekObj ? weekObj.chocotone : `Semana ${weekNum}`}!`,
+        'success'
+      );
+      switchTab('weeks', { weekNum });
+    } catch (err) {
+      state.connectionStatus = 'error';
+      state.lastSyncError = err && err.message ? err.message : 'Erro ao salvar';
+      renderSyncStatus();
+      showToast(`Erro ao salvar avaliação: ${state.lastSyncError}`, 'error');
+    } finally {
+      submitBtn.disabled = false;
+      syncExistingVoteIntoForm();
     }
-
-    // Modo local
-    const key = person.toLowerCase();
-    const idx = state.votes.findIndex((v) => v.week === weekNum && v.person.trim().toLowerCase() === key);
-    const voteObj = {
-      week: weekNum,
-      person,
-      sabor: votePayload.sabor,
-      recheio: votePayload.recheio,
-      maciez: votePayload.maciez,
-      docura: votePayload.docura,
-      comment: votePayload.comment,
-      updatedAt: new Date().toISOString()
-    };
-
-    if (idx >= 0) {
-      state.votes[idx] = voteObj;
-    } else {
-      state.votes.push(voteObj);
-    }
-    saveLocalData();
-    state.slidersTouched = false;
-    renderAll();
-    showToast(`Avaliação de ${person} salva localmente!`, 'success');
-    switchTab('weeks', { weekNum });
   }
 
   async function deleteVote(weekNum, person) {
-    if (state.backend.type !== 'local') {
-      const backendLabel = getBackendDisplayName();
-      try {
-        const res = await backendDeleteVote(weekNum, person);
-        state.weeks = res.weeks;
-        state.votes = res.votes;
-        state.connectionStatus = 'connected';
-        saveLocalData();
-        renderAll();
-        showToast(`Avaliação de ${person} removida do ${backendLabel}.`, 'success');
-      } catch (err) {
-        showToast(`Erro ao remover do ${backendLabel}: ${err.message}`, 'error');
-      }
+    if (!state.backend) {
+      showToast('Banco de dados não configurado em config.js.', 'error');
       return;
     }
 
-    state.votes = state.votes.filter(
-      (v) => !(v.week === weekNum && v.person.trim().toLowerCase() === person.trim().toLowerCase())
-    );
-    saveLocalData();
-    renderAll();
-    showToast(`Avaliação de ${person} removida.`, 'success');
+    try {
+      const res = await supabaseDeleteVote(state.backend.url, state.backend.key, weekNum, person);
+      state.weeks = res.weeks;
+      state.votes = res.votes;
+      state.connectionStatus = 'connected';
+      state.lastSyncError = '';
+      saveLocalData();
+      renderAll();
+      showToast(`Avaliação de ${person} removida.`, 'success');
+    } catch (err) {
+      state.connectionStatus = 'error';
+      state.lastSyncError = err && err.message ? err.message : 'Erro ao remover';
+      renderSyncStatus();
+      showToast(`Erro ao remover avaliação: ${state.lastSyncError}`, 'error');
+    }
   }
 
   // ---------- Week Modal ----------
@@ -1949,10 +1716,20 @@
     const notesInput = document.getElementById('week-notes-input');
     const saveBtn = document.getElementById('save-week-btn');
 
+    if (!state.backend) {
+      showToast('Banco de dados não configurado em config.js.', 'error');
+      return;
+    }
+
     const weekNum = parseInt(numInput.value, 10);
     const chocotone = chocInput.value.trim();
     if (!Number.isFinite(weekNum) || weekNum < 1 || weekNum > 52) {
       showToast('Número da semana inválido (1 a 52).', 'error');
+      return;
+    }
+    if (state.editingWeekOriginal === null && state.weeks.some((w) => w.week === weekNum)) {
+      numInput.focus();
+      showToast(`A Semana ${weekNum} já existe. Escolha outro número ou clique em "Editar Chocotone".`, 'error');
       return;
     }
     if (!chocotone) {
@@ -1962,392 +1739,37 @@
     }
 
     const payload = {
-      action: 'saveWeek',
       week: weekNum,
       chocotone,
       brand: brandInput.value.trim(),
       notes: notesInput.value.trim()
     };
 
-    if (state.backend.type !== 'local') {
-      const backendLabel = getBackendDisplayName();
-      saveBtn.disabled = true;
-      saveBtn.textContent = 'Salvando...';
-      try {
-        const res = await backendSaveWeek(payload);
-        state.weeks = res.weeks;
-        state.votes = res.votes;
-        state.connectionStatus = 'connected';
-        saveLocalData();
-        closeDialog('week-dialog');
-        state.selectedWeekFilter = weekNum;
-        renderAll();
-        showToast(`Semana ${weekNum} (${chocotone}) salva no ${backendLabel}!`, 'success');
-      } catch (err) {
-        showToast(`Erro ao salvar semana no ${backendLabel}: ${err.message}`, 'error');
-      } finally {
-        saveBtn.disabled = false;
-        saveBtn.textContent = 'Salvar Semana';
-      }
-      return;
-    }
-
-    const idx = state.weeks.findIndex((w) => w.week === weekNum);
-    const weekObj = {
-      week: weekNum,
-      chocotone: payload.chocotone,
-      brand: payload.brand,
-      notes: payload.notes
-    };
-    if (idx >= 0) state.weeks[idx] = weekObj;
-    else state.weeks.push(weekObj);
-
-    state.weeks.sort((a, b) => a.week - b.week);
-    saveLocalData();
-    closeDialog('week-dialog');
-    state.selectedWeekFilter = weekNum;
-    renderAll();
-    showToast(`Semana ${weekNum} (${chocotone}) salva!`, 'success');
-  }
-
-  // ---------- Sheets & Backup Modal ----------
-  function setSheetsInlineFeedback(html, type = 'info') {
-    const box = document.getElementById('sheets-inline-feedback');
-    if (!box) return;
-    if (!html) {
-      box.hidden = true;
-      box.innerHTML = '';
-      box.className = 'inline-feedback';
-      return;
-    }
-    box.hidden = false;
-    box.className = `inline-feedback is-${type}`;
-    box.innerHTML = html;
-  }
-
-  async function copyTextToClipboard(text) {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      try {
-        await navigator.clipboard.writeText(text);
-        return true;
-      } catch (_) {}
-    }
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.setAttribute('readonly', '');
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    let ok = false;
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Salvando...';
     try {
-      ok = document.execCommand('copy');
-    } catch (_) {}
-    ta.remove();
-    return ok;
-  }
-
-  function renderSheetsDialog() {
-    const statusCard = document.getElementById('modal-connection-card');
-    const sbUrlInput = document.getElementById('supabase-url-input');
-    const sbKeyInput = document.getElementById('supabase-key-input');
-    const gasUrlInput = document.getElementById('apps-script-url-input');
-    const copySnippetBtn = document.getElementById('copy-config-snippet-btn');
-    const pushBtn = document.getElementById('push-local-btn');
-    const disconnectBtn = document.getElementById('disconnect-backend-btn');
-
-    if (sbUrlInput) {
-      if (state.backend.type === 'supabase') {
-        sbUrlInput.value = state.backend.url;
-      } else if (!sbUrlInput.value.trim() && CONFIG.SUPABASE_URL) {
-        sbUrlInput.value = String(CONFIG.SUPABASE_URL).trim();
-      }
-    }
-
-    if (sbKeyInput) {
-      if (state.backend.type === 'supabase') {
-        sbKeyInput.value = state.backend.key;
-      } else if (!sbKeyInput.value.trim() && CONFIG.SUPABASE_KEY) {
-        sbKeyInput.value = String(CONFIG.SUPABASE_KEY).trim();
-      }
-    }
-
-    if (gasUrlInput) {
-      gasUrlInput.value = state.backend.type === 'sheets' ? state.backend.url : '';
-    }
-
-    setSheetsInlineFeedback('');
-
-    const backendType = state.backend.type;
-    const backendLabel = getBackendDisplayName();
-
-    if (statusCard) {
-      if (backendType === 'supabase' && state.connectionStatus === 'connected') {
-        statusCard.className = 'setup-status-card is-connected';
-        statusCard.innerHTML = `<strong>✅ Conectado ao Supabase</strong><br/>As notas e semanas são lidas e gravadas direto no banco Supabase configurado.`;
-      } else if (backendType === 'sheets' && state.connectionStatus === 'connected') {
-        statusCard.className = 'setup-status-card is-connected';
-        statusCard.innerHTML = `<strong>✅ Conectado ao Google Sheets</strong><br/>As notas e semanas são lidas e gravadas direto na planilha configurada.`;
-      } else if (backendType !== 'local' && state.connectionStatus === 'error') {
-        statusCard.className = 'setup-status-card';
-        statusCard.innerHTML = `<strong>⚠️ Erro ao conectar (${escapeHtml(backendLabel)})</strong><br/>${escapeHtml(state.lastSyncError || 'Verifique a URL, a chave e as permissões.')}`;
-      } else {
-        statusCard.className = 'setup-status-card';
-        statusCard.innerHTML = `<strong>💾 Modo Local ativo</strong><br/>Os dados estão salvos apenas neste navegador. Conecte seu projeto Supabase abaixo para compartilhar com toda a equipe.`;
-      }
-    }
-
-    const hasBackend = backendType !== 'local';
-    if (copySnippetBtn) copySnippetBtn.hidden = backendType !== 'supabase';
-    if (pushBtn) pushBtn.hidden = !hasBackend;
-    if (disconnectBtn) disconnectBtn.hidden = !hasBackend;
-  }
-
-  async function handleConnectSupabase() {
-    const sbUrlInput = document.getElementById('supabase-url-input');
-    const sbKeyInput = document.getElementById('supabase-key-input');
-    const btn = document.getElementById('test-supabase-btn');
-    const validation = validateSupabaseConfig(sbUrlInput?.value, sbKeyInput?.value);
-
-    if (!validation.ok) {
-      setSheetsInlineFeedback(`<strong>Não foi possível validar:</strong> ${escapeHtml(validation.reason)}`, 'error');
-      showToast(validation.reason, 'error');
-      return;
-    }
-
-    sbUrlInput.value = validation.url;
-    sbKeyInput.value = validation.key;
-    setSheetsInlineFeedback('');
-
-    const oldLabel = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = 'Testando...';
-    try {
-      const payload = await supabaseGetAll(validation.url, validation.key);
-      state.backend = {
-        type: 'supabase',
-        url: validation.url,
-        key: validation.key,
-        source: 'storage'
-      };
-      try {
-        localStorage.setItem(
-          STORAGE_KEYS.supabase,
-          JSON.stringify({ url: validation.url, key: validation.key })
-        );
-      } catch (_) {}
-
-      if (payload.weeks.length > 0 || payload.votes.length > 0) {
-        state.weeks = payload.weeks;
-        state.votes = payload.votes;
-        saveLocalData();
-      }
-      state.connectionStatus = 'connected';
-      state.lastSyncError = '';
-      ensureValidSelectedWeek();
-      renderAll();
-      renderSheetsDialog();
-
-      const emptyNote =
-        payload.weeks.length === 0 && payload.votes.length === 0
-          ? 'As tabelas estão vazias — clique em <strong>↑ Enviar dados locais para o banco</strong> acima para subir Semana 1 e Semana 2.'
-          : `${payload.weeks.length} semana(s) e ${payload.votes.length} avaliação(ões) carregadas. Clique em <strong>Copiar para config.js</strong> para deixar fixo no site para toda a equipe.`;
-
-      setSheetsInlineFeedback(`<strong>✅ Conectado ao Supabase!</strong> ${emptyNote}`, 'success');
-      showToast('Conectado ao Supabase com sucesso!', 'success');
-    } catch (err) {
-      const msg = err && err.message ? err.message : 'Erro desconhecido';
-      const isMissingTables = err && err.code === 'MISSING_TABLES';
-      const tips = isMissingTables
-        ? `
-          <li>Clique em <strong>Copiar SQL (supabase/schema.sql)</strong> abaixo no passo a passo.</li>
-          <li>No painel do Supabase, abra <strong>SQL Editor → New query</strong>, cole o conteúdo e clique em <strong>Run</strong>.</li>
-          <li>Depois volte aqui e clique em <strong>Testar e Conectar Supabase</strong> novamente.</li>
-        `
-        : `
-          <li>Confirme se a <strong>Project URL</strong> é <code>https://seuprojeto.supabase.co</code> (Settings → Data API).</li>
-          <li>Use a <strong>Publishable key</strong> (<code>sb_publishable_...</code>) ou a chave legacy <strong>anon public</strong> (<code>eyJ...</code>).</li>
-          <li>Garanta que você executou o arquivo <code>supabase/schema.sql</code> inteiro no <strong>SQL Editor</strong> (incluindo as políticas RLS).</li>
-        `;
-
-      setSheetsInlineFeedback(
-        `
-          <strong>❌ Falha ao conectar no Supabase (${escapeHtml(msg)})</strong>
-          <ul>${tips}</ul>
-        `,
-        'error'
-      );
-      showToast(`Falha na conexão: ${msg}`, 'error');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = oldLabel;
-    }
-  }
-
-  async function handleConnectSheets() {
-    const urlInput = document.getElementById('apps-script-url-input');
-    const btn = document.getElementById('test-connect-btn');
-    const validation = validateAppsScriptUrl(urlInput.value);
-
-    if (!validation.ok) {
-      setSheetsInlineFeedback(`<strong>Não foi possível validar a URL:</strong> ${escapeHtml(validation.reason)}`, 'error');
-      showToast(validation.reason, 'error');
-      return;
-    }
-
-    const url = validation.url;
-    urlInput.value = url;
-    setSheetsInlineFeedback('');
-
-    const oldLabel = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = 'Testando...';
-    try {
-      let effectiveUrl = url;
-      let payload;
-      try {
-        const res = await apiGetAllSingle(url);
-        payload = res.payload;
-        effectiveUrl = res.effectiveUrl;
-      } catch (firstErr) {
-        if (/\/a\/macros\/[^/]+\/s\//i.test(url)) {
-          const altUrl = url.replace(/\/a\/macros\/[^/]+\/s\//i, '/macros/s/');
-          const res = await apiGetAllSingle(altUrl);
-          payload = res.payload;
-          effectiveUrl = res.effectiveUrl;
-          urlInput.value = effectiveUrl;
-        } else {
-          throw firstErr;
-        }
-      }
-
-      state.backend = { type: 'sheets', url: effectiveUrl, source: 'storage' };
-      try {
-        localStorage.setItem(STORAGE_KEYS.apiUrl, effectiveUrl);
-      } catch (_) {}
-
-      // Se a planilha retornou dados, atualiza localmente (se vazia, preserva local para o usuário poder enviar)
-      if (payload.weeks.length > 0 || payload.votes.length > 0) {
-        state.weeks = payload.weeks;
-        state.votes = payload.votes;
-        saveLocalData();
-      }
-      state.connectionStatus = 'connected';
-      state.lastSyncError = '';
-      ensureValidSelectedWeek();
-      renderAll();
-      renderSheetsDialog();
-      setSheetsInlineFeedback(
-        `<strong>✅ Conectado com sucesso!</strong> Agora todas as notas são salvas direto na planilha.`,
-        'success'
-      );
-      showToast('Conectado ao Google Sheets com sucesso!', 'success');
-    } catch (err) {
-      const msg = err && err.message ? err.message : 'Erro desconhecido';
-      const sep = url.includes('?') ? '&' : '?';
-      const testLink = `${url}${sep}action=getAll`;
-      setSheetsInlineFeedback(
-        `
-          <strong>❌ Falha na conexão (${escapeHtml(msg)})</strong>
-          <ul>
-            <li><strong>Verifique a implantação:</strong> em <em>Apps Script → Implantar → Gerenciar implantações</em>, deixe <em>Quem pode acessar</em> como <strong>Qualquer pessoa</strong> (não "Somente eu" nem apenas dentro da empresa).</li>
-            <li><strong>Conta Google Workspace da empresa:</strong> muitas empresas bloqueiam Web Apps públicos na conta corporativa e redirecionam para o login do Google (causando erro CORS / <code>Failed to fetch</code>). Use o <strong>Supabase</strong> acima como opção mais rápida.</li>
-          </ul>
-          <div class="inline-feedback-actions">
-            <a href="${escapeHtml(testLink)}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-xs">🔎 Abrir URL em nova aba</a>
-          </div>
-        `,
-        'error'
-      );
-      showToast(`Falha na conexão: ${msg}`, 'error');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = oldLabel;
-    }
-  }
-
-  async function handlePushLocalToBackend() {
-    if (state.backend.type === 'local') return;
-    const btn = document.getElementById('push-local-btn');
-    const backendLabel = getBackendDisplayName();
-    const oldLabel = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = 'Enviando...';
-    try {
-      const res = await backendImportAll(state.weeks, state.votes);
+      const res = await supabaseSaveWeek(state.backend.url, state.backend.key, payload);
       state.weeks = res.weeks;
       state.votes = res.votes;
       state.connectionStatus = 'connected';
+      state.lastSyncError = '';
       saveLocalData();
-      ensureValidSelectedWeek();
+      closeDialog('week-dialog');
+      state.selectedWeekFilter = weekNum;
       renderAll();
-      renderSheetsDialog();
-      showToast(`Dados locais sincronizados com o ${backendLabel}!`, 'success');
+      showToast(`Semana ${weekNum} (${chocotone}) salva!`, 'success');
     } catch (err) {
-      showToast(`Erro ao enviar dados para o ${backendLabel}: ${err.message}`, 'error');
+      state.connectionStatus = 'error';
+      state.lastSyncError = err && err.message ? err.message : 'Erro ao salvar semana';
+      renderSyncStatus();
+      showToast(`Erro ao salvar semana: ${state.lastSyncError}`, 'error');
     } finally {
-      btn.disabled = false;
-      btn.textContent = oldLabel;
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Salvar Semana';
     }
   }
 
-  async function handleCopySql() {
-    try {
-      const res = await fetch('./supabase/schema.sql', { cache: 'no-store' });
-      if (!res.ok) throw new Error('Arquivo supabase/schema.sql não encontrado');
-      const sql = await res.text();
-      const copied = await copyTextToClipboard(sql);
-      if (!copied) throw new Error('Clipboard indisponível');
-      showToast('SQL das tabelas copiado! Cole no SQL Editor do Supabase e clique em Run.', 'success');
-    } catch (_) {
-      showToast('Abra o arquivo ranking-natalino/supabase/schema.sql para copiar o SQL.', 'info');
-    }
-  }
-
-  async function handleCopyConfigSnippet() {
-    let url = '';
-    let key = '';
-    if (state.backend.type === 'supabase') {
-      url = state.backend.url;
-      key = state.backend.key;
-    } else {
-      const sbUrlInput = document.getElementById('supabase-url-input');
-      const sbKeyInput = document.getElementById('supabase-key-input');
-      const check = validateSupabaseConfig(sbUrlInput?.value, sbKeyInput?.value);
-      if (!check.ok) {
-        showToast(check.reason, 'error');
-        return;
-      }
-      url = check.url;
-      key = check.key;
-    }
-
-    const snippet = [
-      `  SUPABASE_URL: ${JSON.stringify(url)},`,
-      `  SUPABASE_KEY: ${JSON.stringify(key)},`
-    ].join('\n');
-
-    const copied = await copyTextToClipboard(snippet);
-    if (copied) {
-      showToast('Trecho copiado! Cole em ranking-natalino/config.js nas linhas SUPABASE_URL e SUPABASE_KEY.', 'success');
-    } else {
-      showToast('Não foi possível copiar automaticamente; copie manualmente para config.js.', 'info');
-    }
-  }
-
-  async function handleCopyGasCode() {
-    try {
-      const res = await fetch('./apps-script/Code.gs', { cache: 'no-store' });
-      if (!res.ok) throw new Error('Arquivo Code.gs não encontrado');
-      const code = await res.text();
-      const copied = await copyTextToClipboard(code);
-      if (!copied) throw new Error('Clipboard indisponível');
-      showToast('Código Code.gs copiado para a área de transferência!', 'success');
-    } catch (_) {
-      showToast('Abra o arquivo ranking-natalino/apps-script/Code.gs para copiar o código.', 'info');
-    }
-  }
-
+  // ---------- Export ----------
   function exportCsv() {
     const header = ['Semana', 'Chocotone', 'Pessoa', 'Sabor', 'Recheio', 'Maciez', 'Doçura', 'Média', 'Comentário'];
     const weekMap = new Map(state.weeks.map((w) => [w.week, w.chocotone]));
@@ -2395,31 +1817,6 @@
     URL.revokeObjectURL(url);
   }
 
-  function handleImportJson(file) {
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const parsed = normalizePayload(JSON.parse(String(reader.result || '{}')));
-        if (!parsed.weeks.length && !parsed.votes.length) {
-          throw new Error('Nenhum dado válido encontrado no JSON.');
-        }
-        state.weeks = parsed.weeks;
-        state.votes = parsed.votes;
-        saveLocalData();
-        if (state.backend.type !== 'local') {
-          await handlePushLocalToBackend();
-        } else {
-          renderAll();
-          showToast('Backup JSON importado com sucesso!', 'success');
-        }
-      } catch (err) {
-        showToast(`Erro ao importar JSON: ${err.message}`, 'error');
-      }
-    };
-    reader.readAsText(file);
-  }
-
   // ---------- Main Render ----------
   function renderAll() {
     renderSyncStatus();
@@ -2448,25 +1845,6 @@
     document.getElementById('weeks-add-btn')?.addEventListener('click', () => openWeekModal());
     document.getElementById('inline-new-week-btn')?.addEventListener('click', () => openWeekModal());
 
-    document.getElementById('sync-status-btn')?.addEventListener('click', () => {
-      renderSheetsDialog();
-      openDialog('sheets-dialog');
-    });
-    document.getElementById('banner-connect-btn')?.addEventListener('click', () => {
-      renderSheetsDialog();
-      openDialog('sheets-dialog');
-    });
-    document.getElementById('footer-config-btn')?.addEventListener('click', () => {
-      renderSheetsDialog();
-      openDialog('sheets-dialog');
-    });
-    document.getElementById('banner-dismiss-btn')?.addEventListener('click', () => {
-      try {
-        localStorage.setItem(STORAGE_KEYS.bannerDismissed, '1');
-      } catch (_) {}
-      renderSyncStatus();
-    });
-
     document.getElementById('refresh-btn')?.addEventListener('click', () => {
       syncFromBackend({ silent: false });
     });
@@ -2477,6 +1855,7 @@
 
     document.getElementById('vote-week')?.addEventListener('change', () => {
       state.slidersTouched = false;
+      state.commentTouched = false;
       syncExistingVoteIntoForm();
     });
 
@@ -2485,8 +1864,13 @@
       renderVotePeopleOptions();
     });
 
+    document.getElementById('vote-comment')?.addEventListener('input', () => {
+      state.commentTouched = true;
+    });
+
     document.getElementById('reset-vote-btn')?.addEventListener('click', () => {
       state.slidersTouched = false;
+      state.commentTouched = false;
       CATEGORIES.forEach((cat) => setCategoryInputValue(cat.key, 7));
       const comment = document.getElementById('vote-comment');
       if (comment) comment.value = '';
@@ -2496,68 +1880,9 @@
     // Week Modal events
     document.getElementById('week-form')?.addEventListener('submit', handleWeekSave);
 
-    // Backend & Backup Modal events
-    document.getElementById('test-supabase-btn')?.addEventListener('click', handleConnectSupabase);
-    document.getElementById('copy-sql-btn')?.addEventListener('click', handleCopySql);
-    document.getElementById('copy-config-snippet-btn')?.addEventListener('click', handleCopyConfigSnippet);
-    document.getElementById('test-connect-btn')?.addEventListener('click', handleConnectSheets);
-    document.getElementById('push-local-btn')?.addEventListener('click', handlePushLocalToBackend);
-    document.getElementById('copy-gas-code-btn')?.addEventListener('click', handleCopyGasCode);
-
-    document.getElementById('disconnect-backend-btn')?.addEventListener('click', () => {
-      try {
-        localStorage.removeItem(STORAGE_KEYS.supabase);
-        localStorage.removeItem(STORAGE_KEYS.apiUrl);
-      } catch (_) {}
-
-      const sbUrlInput = document.getElementById('supabase-url-input');
-      const sbKeyInput = document.getElementById('supabase-key-input');
-      const gasUrlInput = document.getElementById('apps-script-url-input');
-      if (sbUrlInput) sbUrlInput.value = '';
-      if (sbKeyInput) sbKeyInput.value = '';
-      if (gasUrlInput) gasUrlInput.value = '';
-
-      state.backend = resolveInitialBackend();
-      state.lastSyncError = '';
-
-      if (state.backend.type !== 'local') {
-        state.connectionStatus = 'connected';
-        renderAll();
-        renderSheetsDialog();
-        syncFromBackend({ silent: true });
-        showToast('Conexão local removida; configuração padrão de config.js continua ativa.', 'info');
-      } else {
-        state.connectionStatus = 'local';
-        renderAll();
-        renderSheetsDialog();
-        showToast('Desconectado neste navegador (Modo Local ativo).', 'info');
-      }
-    });
-
+    // Export events
     document.getElementById('export-csv-btn')?.addEventListener('click', exportCsv);
     document.getElementById('export-json-btn')?.addEventListener('click', exportJson);
-    document.getElementById('import-json-input')?.addEventListener('change', (e) => {
-      const file = e.target.files && e.target.files[0];
-      handleImportJson(file);
-      e.target.value = '';
-    });
-
-    document.getElementById('reset-demo-btn')?.addEventListener('click', () => {
-      askConfirmation(
-        'Restaurar os dados iniciais da planilha neste navegador? (Não apaga dados salvos na nuvem.)',
-        () => {
-          const seed = normalizePayload(cloneSeedData());
-          state.weeks = seed.weeks;
-          state.votes = seed.votes;
-          saveLocalData();
-          state.selectedWeekFilter = 'latest';
-          renderAll();
-          closeDialog('sheets-dialog');
-          showToast('Dados iniciais restaurados localmente.', 'success');
-        },
-        'Restaurar'
-      );
-    });
 
     // Dialog close triggers & backdrop click
     document.querySelectorAll('[data-close-dialog]').forEach((btn) => {
@@ -2570,6 +1895,10 @@
       });
     });
 
+    document.getElementById('confirm-dialog')?.addEventListener('close', () => {
+      state.pendingConfirmAction = null;
+    });
+
     document.getElementById('confirm-dialog-ok')?.addEventListener('click', () => {
       const fn = state.pendingConfirmAction;
       state.pendingConfirmAction = null;
@@ -2579,13 +1908,21 @@
   }
 
   function init() {
+    try {
+      LEGACY_STORAGE_KEYS.forEach((k) => localStorage.removeItem(k));
+    } catch (_) {}
+
     loadLocalData();
-    state.backend = resolveInitialBackend();
+    state.backend = resolveConfiguredSupabase();
+    state.connectionStatus = state.backend ? 'syncing' : 'error';
+    if (!state.backend) {
+      state.lastSyncError = 'Configuração do banco de dados ausente ou inválida em config.js.';
+    }
     bindEvents();
     buildSlidersOnce();
     renderAll();
 
-    if (state.backend.type !== 'local') {
+    if (state.backend) {
       syncFromBackend({ silent: true });
     }
   }

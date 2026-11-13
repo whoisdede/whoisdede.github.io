@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Ranking Natalino — Degustação de Chocotones</title>
-  <meta name="description" content="Aplicativo semanal de avaliação e ranking de chocotones da equipe, com notas de 0 a 10 por categoria, dashboard comparativo e integração opcional com Google Sheets." />
+  <meta name="description" content="Aplicativo semanal de avaliação e ranking de chocotones da equipe, com notas de 0 a 10 por categoria e dashboard comparativo." />
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%2314452f'/%3E%3Cpath d='M32 10l14 18h-7l10 14H15l10-14h-7L32 10z' fill='%23f5d076'/%3E%3Crect x='28' y='42' width='8' height='10' rx='2' fill='%23c98a2c'/%3E%3Ccircle cx='32' cy='9' r='3' fill='%23b4232c'/%3E%3C/svg%3E" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -31,12 +31,12 @@
       </div>
 
       <div class="header-actions">
-        <button type="button" id="sync-status-btn" class="status-pill" aria-label="Configurar banco de dados Supabase ou backup">
+        <div id="sync-status" class="status-pill" role="status" aria-live="polite">
           <span class="status-dot" aria-hidden="true"></span>
-          <span id="sync-status-label">Modo Local</span>
-        </button>
+          <span id="sync-status-label">Sincronizando...</span>
+        </div>
 
-        <button type="button" id="refresh-btn" class="btn btn-ghost btn-sm" hidden title="Recarregar notas do banco">
+        <button type="button" id="refresh-btn" class="btn btn-ghost btn-sm" title="Recarregar notas atualizadas">
           ↻ Atualizar
         </button>
 
@@ -52,17 +52,6 @@
   </header>
 
   <div class="container">
-    <div id="local-banner" class="info-banner" role="region" aria-label="Aviso de modo de armazenamento" hidden>
-      <div class="info-banner-text">
-        <strong>Modo Local ativo:</strong> os dados iniciais da planilha já estão carregados aqui.
-        Para que toda a equipe vote no mesmo ranking compartilhado, conecte seu projeto gratuito do <strong>Supabase</strong>.
-      </div>
-      <div class="info-banner-actions">
-        <button type="button" id="banner-connect-btn" class="btn btn-secondary btn-xs">Conectar Supabase</button>
-        <button type="button" id="banner-dismiss-btn" class="btn btn-ghost btn-xs" aria-label="Fechar aviso">Fechar</button>
-      </div>
-    </div>
-
     <nav class="tab-bar" role="tablist" aria-label="Visualizações do ranking">
       <button
         type="button"
@@ -249,7 +238,8 @@
   <footer class="site-footer container">
     <p>
       Ranking Natalino de Chocotones • Feito para a degustação semanal da equipe
-      • <button type="button" id="footer-config-btn" class="link-btn">Configurar Banco (Supabase) / Backup</button>
+      • <button type="button" id="export-csv-btn" class="link-btn">Exportar CSV (Excel)</button>
+      • <button type="button" id="export-json-btn" class="link-btn">Exportar JSON</button>
     </p>
   </footer>
 
@@ -287,111 +277,6 @@
         <button type="submit" id="save-week-btn" class="btn btn-primary">Salvar Semana</button>
       </div>
     </form>
-  </dialog>
-
-  <!-- MODAL: BANCO DE DADOS (SUPABASE) & BACKUP -->
-  <dialog id="sheets-dialog" class="modal-dialog modal-dialog-lg" aria-labelledby="sheets-dialog-title">
-    <div class="modal-content">
-      <div class="modal-header">
-        <div>
-          <h3 id="sheets-dialog-title">⚡ Conectar ao Supabase &amp; Backup</h3>
-          <p class="card-subtitle">Banco PostgreSQL gratuito e compartilhado para toda a equipe votar sem login.</p>
-        </div>
-        <button type="button" class="icon-close-btn" data-close-dialog="sheets-dialog" aria-label="Fechar">✕</button>
-      </div>
-
-      <div class="modal-body">
-        <div class="setup-status-card" id="modal-connection-card"></div>
-
-        <div class="form-row-2col">
-          <div class="field-group">
-            <label for="supabase-url-input">Project URL (Supabase)</label>
-            <input
-              type="url"
-              id="supabase-url-input"
-              placeholder="https://seu-projeto.supabase.co"
-            />
-          </div>
-          <div class="field-group">
-            <label for="supabase-key-input">Publishable / Anon Key</label>
-            <input
-              type="text"
-              id="supabase-key-input"
-              placeholder="sb_publishable_... ou eyJ..."
-            />
-          </div>
-        </div>
-
-        <div class="modal-actions-grid" style="margin-bottom:8px;">
-          <button type="button" id="test-supabase-btn" class="btn btn-primary">Testar e Conectar Supabase</button>
-          <button type="button" id="copy-config-snippet-btn" class="btn btn-secondary btn-sm" hidden>
-            📋 Copiar para config.js
-          </button>
-          <button type="button" id="push-local-btn" class="btn btn-secondary btn-sm" hidden>
-            ⬆ Enviar dados locais para o banco
-          </button>
-          <button type="button" id="disconnect-backend-btn" class="btn btn-ghost btn-sm" hidden>
-            Desconectar neste navegador
-          </button>
-        </div>
-
-        <div id="sheets-inline-feedback" class="inline-feedback" hidden role="status" aria-live="polite"></div>
-
-        <p class="field-help" style="margin-bottom:14px;">
-          Para que todos na empresa acessem já conectado, cole <code>SUPABASE_URL</code> e <code>SUPABASE_KEY</code> em <code>ranking-natalino/config.js</code> e faça <code>git push</code>.
-        </p>
-
-        <details class="setup-steps" open>
-          <summary>Passo a passo no Supabase (leva menos de 2 minutos)</summary>
-          <ol>
-            <li>Acesse <strong>supabase.com</strong> (pode até criar um projeto novo ou usar um existente, as tabelas têm prefixo <code>chocotone_</code>).</li>
-            <li>Abra <strong>SQL Editor → New query</strong>, cole o SQL do botão abaixo e clique em <strong>Run</strong> (ele cria as tabelas e já importa Semana 1 e Semana 2!).</li>
-            <li>Vá em <strong>Project Settings → API</strong> e copie a <strong>Project URL</strong> e a chave pública (<strong>Publishable key</strong> ou <strong>anon public</strong>).</li>
-            <li>Cole nos campos acima para testar ou direto em <code>ranking-natalino/config.js</code>.</li>
-          </ol>
-          <div class="setup-steps-actions">
-            <button type="button" id="copy-sql-btn" class="btn btn-secondary btn-sm">
-              📋 Copiar SQL (supabase/schema.sql)
-            </button>
-          </div>
-        </details>
-
-        <details class="setup-steps" style="margin-top:12px;">
-          <summary>Alternativa: conectar via Google Apps Script (conta @gmail.com pessoal)</summary>
-          <div style="margin-top:10px;">
-            <div class="field-group">
-              <label for="apps-script-url-input">URL do Web App (/exec)</label>
-              <div class="input-with-btn">
-                <input
-                  type="url"
-                  id="apps-script-url-input"
-                  placeholder="https://script.google.com/macros/s/.../exec"
-                />
-                <button type="button" id="test-connect-btn" class="btn btn-secondary">Testar Sheets</button>
-              </div>
-            </div>
-            <button type="button" id="copy-gas-code-btn" class="btn btn-ghost btn-xs">
-              📋 Copiar código Code.gs
-            </button>
-          </div>
-        </details>
-
-        <hr class="divider" />
-
-        <div class="backup-section">
-          <h4>Exportar / Backup</h4>
-          <div class="backup-actions">
-            <button type="button" id="export-csv-btn" class="btn btn-secondary btn-sm">⬇ Baixar CSV (Excel)</button>
-            <button type="button" id="export-json-btn" class="btn btn-secondary btn-sm">⬇ Baixar JSON</button>
-            <label class="btn btn-secondary btn-sm file-upload-btn">
-              ⬆ Importar JSON
-              <input type="file" id="import-json-input" accept="application/json,.json" hidden />
-            </label>
-            <button type="button" id="reset-demo-btn" class="btn btn-ghost btn-sm danger-text">Restaurar dados iniciais</button>
-          </div>
-        </div>
-      </div>
-    </div>
   </dialog>
 
   <!-- MODAL: CONFIRMAÇÃO -->
