@@ -1,16 +1,23 @@
 /**
  * Configuração do Ranking Natalino de Chocotones
  *
- * Para conectar toda a empresa na mesma planilha do Google Sheets:
- * 1. Siga o guia em README.md (ou no botão "Conectar Google Sheets" no app)
- * 2. Cole a URL do seu Web App do Google Apps Script abaixo em APPS_SCRIPT_URL
- * 3. Faça commit e push — todos que acessarem o link já entrarão conectados!
+ * Para conectar toda a empresa no mesmo banco Supabase (gratuito, sem login):
+ * 1. Crie um projeto no Supabase e rode o SQL de `supabase/schema.sql`
+ * 2. Em Project Settings > API, copie a Project URL e a chave pública
+ *    (Publishable Key `sb_publishable_...` ou `anon` `public`)
+ * 3. Cole abaixo em SUPABASE_URL e SUPABASE_KEY e faça git push
  */
 window.RANKING_CONFIG = {
   APP_TITLE: 'Ranking Natalino',
   APP_SUBTITLE: 'Degustação Semanal de Chocotones da Firma',
 
-  // Exemplo: 'https://script.google.com/macros/s/AKfycb.../exec'
+  // Configuração principal (Supabase)
+  // Exemplo URL: 'https://abcdefg.supabase.co'
+  // Exemplo Key: 'sb_publishable_...' ou 'eyJhbGci...'
+  SUPABASE_URL: '',
+  SUPABASE_KEY: '',
+
+  // Opcional (alternativa via Google Sheets Apps Script /exec)
   APPS_SCRIPT_URL: '',
 
   CATEGORIES: [

@@ -6,6 +6,7 @@
 
   const STORAGE_KEYS = {
     data: 'ranking_natalino_data_v1',
+    supabase: 'ranking_natalino_supabase_v1',
     apiUrl: 'ranking_natalino_api_url_v1',
     lastPerson: 'ranking_natalino_last_person_v1',
     bannerDismissed: 'ranking_natalino_banner_dismissed_v1'
@@ -25,7 +26,7 @@
     votes: [],
     activeTab: 'dashboard',
     selectedWeekFilter: 'latest', // number | 'all'
-    apiUrl: '',
+    backend: { type: 'local' }, // { type: 'local' } | { type: 'supabase', url, key, source } | { type: 'sheets', url, source }
     connectionStatus: 'local', // 'local' | 'connected' | 'syncing' | 'error'
     lastSyncError: '',
     editingWeekOriginal: null,
@@ -210,28 +211,342 @@
     saveLocalData();
   }
 
-  function resolveInitialApiUrl() {
+  function validateSupabaseConfig(rawUrl, rawKey) {
+    const raw = String(rawUrl || '').trim().replace(/\/+$/, '');
+    const key = String(rawKey || '').trim();
+
+    if (!raw) {
+      return { ok: false, url: '', key, reason: 'Cole a Project URL do Supabase antes de testar.' };
+    }
+
+    let parsed;
+    try {
+      parsed = new URL(raw);
+    } catch (_) {
+      return {
+        ok: false,
+        url: raw,
+        key,
+        reason: 'Project URL inválida. Ela deve começar com https:// (ex.: https://seuprojeto.supabase.co).'
+      };
+    }
+
+    const isLocalhost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+    if (parsed.protocol !== 'https:' && !(isLocalhost && parsed.protocol === 'http:')) {
+      return { ok: false, url: raw, key, reason: 'A Project URL precisa começar com https://.' };
+    }
+
+    if (parsed.hostname === 'supabase.com' || parsed.hostname.endsWith('.supabase.com')) {
+      return {
+        ok: false,
+        url: raw,
+        key,
+        reason:
+          'Você colou o link do painel (dashboard) do Supabase. No painel do projeto, abra Project Settings → Data API e copie a "Project URL" (ex.: https://xyz.supabase.co).'
+      };
+    }
+
+    const cleanPath = parsed.pathname.replace(/\/rest\/v1.*$/i, '').replace(/\/+$/, '');
+    const cleanUrl = `${parsed.origin}${cleanPath}`;
+
+    if (!key) {
+      return {
+        ok: false,
+        url: cleanUrl,
+        key: '',
+        reason: 'Cole a chave pública do Supabase (Publishable key sb_publishable_... ou anon public).'
+      };
+    }
+
+    if (key.startsWith('sb_secret_')) {
+      return {
+        ok: false,
+        url: cleanUrl,
+        key,
+        reason:
+          'Você colou uma Secret Key (sb_secret_...). Por segurança, nunca use a chave secreta no site — copie a Publishable Key (sb_publishable_...) ou anon public.'
+      };
+    }
+
+    if (/^postgres(ql)?:\/\//i.test(key)) {
+      return {
+        ok: false,
+        url: cleanUrl,
+        key,
+        reason: 'Você colou a string de conexão do Postgres. Em Settings → API Keys, copie a Publishable key (ou anon public).'
+      };
+    }
+
+    if (key.startsWith('eyJ')) {
+      const parts = key.split('.');
+      if (parts.length !== 3) {
+        return { ok: false, url: cleanUrl, key, reason: 'Chave JWT incompleta. Copie a chave anon public inteira.' };
+      }
+      try {
+        const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+        const payload = JSON.parse(atob(b64));
+        if (payload && payload.role === 'service_role') {
+          return {
+            ok: false,
+            url: cleanUrl,
+            key,
+            reason: 'Você colou a chave service_role (secreta). Por segurança, use apenas a chave pública anon / Publishable.'
+          };
+        }
+      } catch (_) {}
+    } else if (!key.startsWith('sb_publishable_') && key.length < 20) {
+      return {
+        ok: false,
+        url: cleanUrl,
+        key,
+        reason: 'Chave inválida. Copie a Publishable key (sb_publishable_...) ou a chave legacy anon public (eyJ...).'
+      };
+    }
+
+    return { ok: true, url: cleanUrl, key };
+  }
+
+  function supabaseHeaders(key, extra = {}) {
+    const headers = {
+      apikey: key,
+      ...extra
+    };
+    // Chaves modernas sb_publishable_* não são JWT: enviar Authorization: Bearer causa HTTP 401 no PostgREST.
+    if (key && !key.startsWith('sb_publishable_')) {
+      headers.Authorization = `Bearer ${key}`;
+    }
+    return headers;
+  }
+
+  function parseSupabaseError(res, text) {
+    let parsed = null;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch (_) {}
+
+    const code = parsed && parsed.code ? String(parsed.code) : '';
+    const msg = parsed && (parsed.message || parsed.error_description || parsed.hint)
+      ? String(parsed.message || parsed.error_description || parsed.hint)
+      : '';
+
+    if (
+      code === '42P01' ||
+      code === 'PGRST205' ||
+      /relation .* does not exist/i.test(msg) ||
+      /could not find the table/i.test(msg)
+    ) {
+      const err = new Error(
+        'As tabelas ainda não existem nesse projeto Supabase. Clique em "Copiar SQL (supabase/schema.sql)", cole no SQL Editor do Supabase e clique em Run.'
+      );
+      err.code = 'MISSING_TABLES';
+      return err;
+    }
+
+    if (res.status === 401 || res.status === 403 || code === '42501') {
+      const err = new Error(
+        'Chave recusada ou sem permissão RLS (HTTP 401/403). Confirme a Project URL, a chave pública (Publishable ou anon) e se todo o schema.sql (incluindo as policies) foi executado.'
+      );
+      err.code = 'AUTH_OR_RLS';
+      return err;
+    }
+
+    if (code === '23503') {
+      const err = new Error('A semana selecionada ainda não está cadastrada no Supabase.');
+      err.code = 'FK_WEEK_MISSING';
+      return err;
+    }
+
+    return new Error(msg || `Erro HTTP ${res.status} no Supabase`);
+  }
+
+  async function supabaseRequest(baseUrl, key, path, { method = 'GET', body, headers = {} } = {}) {
+    const cleanBase = String(baseUrl || '').replace(/\/+$/, '');
+    const url = `${cleanBase}/rest/v1/${path.replace(/^\/+/, '')}`;
+    const finalHeaders = supabaseHeaders(key, {
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      ...headers
+    });
+
+    const res = await fetch(url, {
+      method,
+      headers: finalHeaders,
+      body: body !== undefined ? JSON.stringify(body) : undefined
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      throw parseSupabaseError(res, text);
+    }
+    if (!text) return null;
+    try {
+      return JSON.parse(text);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function supabaseGetAll(baseUrl, key) {
+    const [weeksRows, votesRows] = await Promise.all([
+      supabaseRequest(baseUrl, key, 'chocotone_weeks?select=week,chocotone,brand,notes&order=week.asc'),
+      supabaseRequest(
+        baseUrl,
+        key,
+        'chocotone_votes?select=week,person,sabor,recheio,maciez,docura,comment,updated_at&order=week.asc,person.asc'
+      )
+    ]);
+
+    const mappedVotes = Array.isArray(votesRows)
+      ? votesRows.map((v) => ({ ...v, updatedAt: v.updated_at || v.updatedAt || '' }))
+      : [];
+
+    return normalizePayload({ weeks: weeksRows || [], votes: mappedVotes });
+  }
+
+  async function supabaseSaveWeek(baseUrl, key, weekObj) {
+    await supabaseRequest(baseUrl, key, 'chocotone_weeks?on_conflict=week', {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: {
+        week: Number(weekObj.week),
+        chocotone: String(weekObj.chocotone || '').trim(),
+        brand: String(weekObj.brand || '').trim(),
+        notes: String(weekObj.notes || '').trim(),
+        updated_at: new Date().toISOString()
+      }
+    });
+    return {
+      mode: 'saved',
+      ...(await supabaseGetAll(baseUrl, key))
+    };
+  }
+
+  async function supabaseSaveVote(baseUrl, key, voteObj) {
+    const weekNum = Number(voteObj.week);
+    const person = String(voteObj.person || '').trim();
+    const personKey = person.toLowerCase();
+    const existed = state.votes.some(
+      (v) => v.week === weekNum && v.person.trim().toLowerCase() === personKey
+    );
+
+    await supabaseRequest(baseUrl, key, 'chocotone_votes?on_conflict=week,person_key', {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: {
+        week: weekNum,
+        person,
+        sabor: Number(voteObj.sabor),
+        recheio: Number(voteObj.recheio),
+        maciez: Number(voteObj.maciez),
+        docura: Number(voteObj.docura),
+        comment: String(voteObj.comment || '').trim(),
+        updated_at: new Date().toISOString()
+      }
+    });
+
+    return {
+      mode: existed ? 'updated' : 'created',
+      ...(await supabaseGetAll(baseUrl, key))
+    };
+  }
+
+  async function supabaseDeleteVote(baseUrl, key, weekNum, person) {
+    const personKey = String(person || '').trim().toLowerCase();
+    if (!personKey) throw new Error('Nome do avaliador inválido.');
+    await supabaseRequest(
+      baseUrl,
+      key,
+      `chocotone_votes?week=eq.${encodeURIComponent(weekNum)}&person_key=eq.${encodeURIComponent(personKey)}`,
+      {
+        method: 'DELETE',
+        headers: { Prefer: 'return=minimal' }
+      }
+    );
+    return {
+      mode: 'deleted',
+      ...(await supabaseGetAll(baseUrl, key))
+    };
+  }
+
+  async function supabaseImportAll(baseUrl, key, rawWeeks, rawVotes) {
+    const clean = normalizePayload({ weeks: rawWeeks, votes: rawVotes });
+    const nowIso = new Date().toISOString();
+
+    if (clean.weeks.length > 0) {
+      const weekRows = clean.weeks.map((w) => ({
+        week: w.week,
+        chocotone: w.chocotone,
+        brand: w.brand || '',
+        notes: w.notes || '',
+        updated_at: nowIso
+      }));
+      await supabaseRequest(baseUrl, key, 'chocotone_weeks?on_conflict=week', {
+        method: 'POST',
+        headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+        body: weekRows
+      });
+    }
+
+    if (clean.votes.length > 0) {
+      const voteRows = clean.votes.map((v) => ({
+        week: v.week,
+        person: v.person,
+        sabor: v.sabor,
+        recheio: v.recheio,
+        maciez: v.maciez,
+        docura: v.docura,
+        comment: v.comment || '',
+        updated_at: v.updatedAt || nowIso
+      }));
+      await supabaseRequest(baseUrl, key, 'chocotone_votes?on_conflict=week,person_key', {
+        method: 'POST',
+        headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+        body: voteRows
+      });
+    }
+
+    return supabaseGetAll(baseUrl, key);
+  }
+
+  function resolveInitialBackend() {
     const params = new URLSearchParams(window.location.search);
-    const queryApi = (params.get('api') || '').trim();
+    const queryApi = normalizeAppsScriptUrl(params.get('api') || '');
     if (isValidAppsScriptUrl(queryApi)) {
       try {
         localStorage.setItem(STORAGE_KEYS.apiUrl, queryApi);
       } catch (_) {}
-      // Limpar query string para manter URL limpa
       const cleanUrl = window.location.pathname + window.location.hash;
       window.history.replaceState({}, '', cleanUrl);
-      return queryApi;
+      return { type: 'sheets', url: queryApi, source: 'query' };
     }
 
     try {
-      const storedUrl = (localStorage.getItem(STORAGE_KEYS.apiUrl) || '').trim();
-      if (isValidAppsScriptUrl(storedUrl)) return storedUrl;
+      const rawSb = localStorage.getItem(STORAGE_KEYS.supabase);
+      if (rawSb) {
+        const parsed = JSON.parse(rawSb);
+        const check = validateSupabaseConfig(parsed && parsed.url, parsed && parsed.key);
+        if (check.ok) {
+          return { type: 'supabase', url: check.url, key: check.key, source: 'storage' };
+        }
+      }
     } catch (_) {}
 
-    const configUrl = String(CONFIG.APPS_SCRIPT_URL || '').trim();
-    if (isValidAppsScriptUrl(configUrl)) return configUrl;
+    const cfgSbCheck = validateSupabaseConfig(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
+    if (cfgSbCheck.ok) {
+      return { type: 'supabase', url: cfgSbCheck.url, key: cfgSbCheck.key, source: 'config' };
+    }
 
-    return '';
+    try {
+      const storedUrl = normalizeAppsScriptUrl(localStorage.getItem(STORAGE_KEYS.apiUrl) || '');
+      if (isValidAppsScriptUrl(storedUrl)) {
+        return { type: 'sheets', url: storedUrl, source: 'storage' };
+      }
+    } catch (_) {}
+
+    const cfgUrl = normalizeAppsScriptUrl(CONFIG.APPS_SCRIPT_URL || '');
+    if (isValidAppsScriptUrl(cfgUrl)) {
+      return { type: 'sheets', url: cfgUrl, source: 'config' };
+    }
+
+    return { type: 'local' };
   }
 
   async function apiGetAllSingle(url) {
@@ -282,36 +597,75 @@
     };
   }
 
-  async function syncFromSheets({ silent = false } = {}) {
-    if (!state.apiUrl) {
+  function getBackendDisplayName(backend = state.backend) {
+    if (backend && backend.type === 'supabase') return 'Supabase';
+    if (backend && backend.type === 'sheets') return 'Google Sheets';
+    return 'Modo Local';
+  }
+
+  async function syncFromBackend({ silent = false } = {}) {
+    if (state.backend.type === 'local') {
       state.connectionStatus = 'local';
       renderSyncStatus();
       return false;
     }
 
+    const label = getBackendDisplayName();
     state.connectionStatus = 'syncing';
     state.lastSyncError = '';
     renderSyncStatus();
 
     try {
-      const payload = await apiGetAll(state.apiUrl);
+      const payload =
+        state.backend.type === 'supabase'
+          ? await supabaseGetAll(state.backend.url, state.backend.key)
+          : await apiGetAll(state.backend.url);
+
       state.weeks = payload.weeks;
       state.votes = payload.votes;
       saveLocalData();
       state.connectionStatus = 'connected';
       ensureValidSelectedWeek();
       renderAll();
-      if (!silent) showToast('Dados atualizados direto do Google Sheets.', 'success');
+      if (!silent) showToast(`Dados atualizados direto do ${label}.`, 'success');
       return true;
     } catch (err) {
       state.connectionStatus = 'error';
       state.lastSyncError = err && err.message ? err.message : 'Erro de conexão';
       renderSyncStatus();
       if (!silent) {
-        showToast(`Não foi possível sincronizar com o Google Sheets: ${state.lastSyncError}`, 'error');
+        showToast(`Não foi possível sincronizar com o ${label}: ${state.lastSyncError}`, 'error');
       }
       return false;
     }
+  }
+
+  async function backendSaveVote(votePayload) {
+    if (state.backend.type === 'supabase') {
+      return supabaseSaveVote(state.backend.url, state.backend.key, votePayload);
+    }
+    return apiPost(state.backend.url, { ...votePayload, action: 'submitVote' });
+  }
+
+  async function backendSaveWeek(weekPayload) {
+    if (state.backend.type === 'supabase') {
+      return supabaseSaveWeek(state.backend.url, state.backend.key, weekPayload);
+    }
+    return apiPost(state.backend.url, { action: 'saveWeek', ...weekPayload });
+  }
+
+  async function backendDeleteVote(weekNum, person) {
+    if (state.backend.type === 'supabase') {
+      return supabaseDeleteVote(state.backend.url, state.backend.key, weekNum, person);
+    }
+    return apiPost(state.backend.url, { action: 'deleteVote', week: weekNum, person });
+  }
+
+  async function backendImportAll(weeks, votes) {
+    if (state.backend.type === 'supabase') {
+      return supabaseImportAll(state.backend.url, state.backend.key, weeks, votes);
+    }
+    return apiPost(state.backend.url, { action: 'syncImport', weeks, votes });
   }
 
   // ---------- Computed Stats ----------
@@ -521,7 +875,10 @@
     if (!pill || !label) return;
     pill.classList.remove('is-connected', 'is-error');
 
-    if (!state.apiUrl) {
+    const backendType = state.backend.type;
+    const backendLabel = getBackendDisplayName();
+
+    if (backendType === 'local') {
       label.textContent = 'Modo Local (Demo)';
       if (refreshBtn) refreshBtn.hidden = true;
     } else if (state.connectionStatus === 'syncing') {
@@ -529,11 +886,11 @@
       if (refreshBtn) refreshBtn.hidden = false;
     } else if (state.connectionStatus === 'error') {
       pill.classList.add('is-error');
-      label.textContent = 'Erro no Google Sheets';
+      label.textContent = `Erro no ${backendLabel}`;
       if (refreshBtn) refreshBtn.hidden = false;
     } else {
       pill.classList.add('is-connected');
-      label.textContent = 'Google Sheets Conectado';
+      label.textContent = `${backendLabel} Conectado`;
       if (refreshBtn) refreshBtn.hidden = false;
     }
 
@@ -542,7 +899,7 @@
       try {
         dismissed = localStorage.getItem(STORAGE_KEYS.bannerDismissed) === '1';
       } catch (_) {}
-      localBanner.hidden = Boolean(state.apiUrl) || dismissed;
+      localBanner.hidden = backendType !== 'local' || dismissed;
     }
   }
 
@@ -1469,15 +1826,17 @@
       localStorage.setItem(STORAGE_KEYS.lastPerson, person);
     } catch (_) {}
 
-    if (state.apiUrl) {
+    if (state.backend.type !== 'local') {
+      const backendLabel = getBackendDisplayName();
       submitBtn.disabled = true;
       const oldLabel = submitBtn.textContent;
-      submitBtn.textContent = 'Salvando na planilha...';
+      submitBtn.textContent = state.backend.type === 'supabase' ? 'Salvando no Supabase...' : 'Salvando na planilha...';
       try {
-        const res = await apiPost(state.apiUrl, votePayload);
+        const res = await backendSaveVote(votePayload);
         state.weeks = res.weeks;
         state.votes = res.votes;
         state.connectionStatus = 'connected';
+        state.lastSyncError = '';
         saveLocalData();
         state.slidersTouched = false;
         renderAll();
@@ -1489,8 +1848,9 @@
         switchTab('weeks', { weekNum });
       } catch (err) {
         state.connectionStatus = 'error';
+        state.lastSyncError = err && err.message ? err.message : 'Erro ao salvar';
         renderSyncStatus();
-        showToast(`Erro ao salvar no Google Sheets: ${err.message}`, 'error');
+        showToast(`Erro ao salvar no ${backendLabel}: ${state.lastSyncError}`, 'error');
       } finally {
         submitBtn.disabled = false;
         submitBtn.textContent = oldLabel;
@@ -1525,16 +1885,18 @@
   }
 
   async function deleteVote(weekNum, person) {
-    if (state.apiUrl) {
+    if (state.backend.type !== 'local') {
+      const backendLabel = getBackendDisplayName();
       try {
-        const res = await apiPost(state.apiUrl, { action: 'deleteVote', week: weekNum, person });
+        const res = await backendDeleteVote(weekNum, person);
         state.weeks = res.weeks;
         state.votes = res.votes;
+        state.connectionStatus = 'connected';
         saveLocalData();
         renderAll();
-        showToast(`Avaliação de ${person} removida da planilha.`, 'success');
+        showToast(`Avaliação de ${person} removida do ${backendLabel}.`, 'success');
       } catch (err) {
-        showToast(`Erro ao remover da planilha: ${err.message}`, 'error');
+        showToast(`Erro ao remover do ${backendLabel}: ${err.message}`, 'error');
       }
       return;
     }
@@ -1607,20 +1969,22 @@
       notes: notesInput.value.trim()
     };
 
-    if (state.apiUrl) {
+    if (state.backend.type !== 'local') {
+      const backendLabel = getBackendDisplayName();
       saveBtn.disabled = true;
       saveBtn.textContent = 'Salvando...';
       try {
-        const res = await apiPost(state.apiUrl, payload);
+        const res = await backendSaveWeek(payload);
         state.weeks = res.weeks;
         state.votes = res.votes;
+        state.connectionStatus = 'connected';
         saveLocalData();
         closeDialog('week-dialog');
         state.selectedWeekFilter = weekNum;
         renderAll();
-        showToast(`Semana ${weekNum} (${chocotone}) salva no Google Sheets!`, 'success');
+        showToast(`Semana ${weekNum} (${chocotone}) salva no ${backendLabel}!`, 'success');
       } catch (err) {
-        showToast(`Erro ao salvar semana: ${err.message}`, 'error');
+        showToast(`Erro ao salvar semana no ${backendLabel}: ${err.message}`, 'error');
       } finally {
         saveBtn.disabled = false;
         saveBtn.textContent = 'Salvar Semana';
@@ -1661,33 +2025,163 @@
     box.innerHTML = html;
   }
 
+  async function copyTextToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch (_) {}
+    }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try {
+      ok = document.execCommand('copy');
+    } catch (_) {}
+    ta.remove();
+    return ok;
+  }
+
   function renderSheetsDialog() {
     const statusCard = document.getElementById('modal-connection-card');
-    const urlInput = document.getElementById('apps-script-url-input');
+    const sbUrlInput = document.getElementById('supabase-url-input');
+    const sbKeyInput = document.getElementById('supabase-key-input');
+    const gasUrlInput = document.getElementById('apps-script-url-input');
+    const copySnippetBtn = document.getElementById('copy-config-snippet-btn');
     const pushBtn = document.getElementById('push-local-btn');
-    const shareBtn = document.getElementById('copy-share-link-btn');
-    const disconnectBtn = document.getElementById('disconnect-sheets-btn');
+    const disconnectBtn = document.getElementById('disconnect-backend-btn');
 
-    if (urlInput) urlInput.value = state.apiUrl || '';
-    setSheetsInlineFeedback('');
-
-    if (statusCard) {
-      if (state.apiUrl && state.connectionStatus === 'connected') {
-        statusCard.className = 'setup-status-card is-connected';
-        statusCard.innerHTML = `<strong>✅ Conectado ao Google Sheets</strong><br/>As notas e semanas são lidas e gravadas direto na planilha configurada.`;
-      } else if (state.apiUrl && state.connectionStatus === 'error') {
-        statusCard.className = 'setup-status-card';
-        statusCard.innerHTML = `<strong>⚠️ Erro ao conectar com a URL informada</strong><br/>${escapeHtml(state.lastSyncError || 'Verifique se o Web App está implantado com acesso para "Qualquer pessoa".')}`;
-      } else {
-        statusCard.className = 'setup-status-card';
-        statusCard.innerHTML = `<strong>💾 Modo Local ativo</strong><br/>Os dados estão salvos apenas neste navegador. Cole a URL do Apps Script abaixo para sincronizar com toda a equipe.`;
+    if (sbUrlInput) {
+      if (state.backend.type === 'supabase') {
+        sbUrlInput.value = state.backend.url;
+      } else if (!sbUrlInput.value.trim() && CONFIG.SUPABASE_URL) {
+        sbUrlInput.value = String(CONFIG.SUPABASE_URL).trim();
       }
     }
 
-    const hasUrl = Boolean(state.apiUrl);
-    if (pushBtn) pushBtn.hidden = !hasUrl;
-    if (shareBtn) shareBtn.hidden = !hasUrl;
-    if (disconnectBtn) disconnectBtn.hidden = !hasUrl;
+    if (sbKeyInput) {
+      if (state.backend.type === 'supabase') {
+        sbKeyInput.value = state.backend.key;
+      } else if (!sbKeyInput.value.trim() && CONFIG.SUPABASE_KEY) {
+        sbKeyInput.value = String(CONFIG.SUPABASE_KEY).trim();
+      }
+    }
+
+    if (gasUrlInput) {
+      gasUrlInput.value = state.backend.type === 'sheets' ? state.backend.url : '';
+    }
+
+    setSheetsInlineFeedback('');
+
+    const backendType = state.backend.type;
+    const backendLabel = getBackendDisplayName();
+
+    if (statusCard) {
+      if (backendType === 'supabase' && state.connectionStatus === 'connected') {
+        statusCard.className = 'setup-status-card is-connected';
+        statusCard.innerHTML = `<strong>✅ Conectado ao Supabase</strong><br/>As notas e semanas são lidas e gravadas direto no banco Supabase configurado.`;
+      } else if (backendType === 'sheets' && state.connectionStatus === 'connected') {
+        statusCard.className = 'setup-status-card is-connected';
+        statusCard.innerHTML = `<strong>✅ Conectado ao Google Sheets</strong><br/>As notas e semanas são lidas e gravadas direto na planilha configurada.`;
+      } else if (backendType !== 'local' && state.connectionStatus === 'error') {
+        statusCard.className = 'setup-status-card';
+        statusCard.innerHTML = `<strong>⚠️ Erro ao conectar (${escapeHtml(backendLabel)})</strong><br/>${escapeHtml(state.lastSyncError || 'Verifique a URL, a chave e as permissões.')}`;
+      } else {
+        statusCard.className = 'setup-status-card';
+        statusCard.innerHTML = `<strong>💾 Modo Local ativo</strong><br/>Os dados estão salvos apenas neste navegador. Conecte seu projeto Supabase abaixo para compartilhar com toda a equipe.`;
+      }
+    }
+
+    const hasBackend = backendType !== 'local';
+    if (copySnippetBtn) copySnippetBtn.hidden = backendType !== 'supabase';
+    if (pushBtn) pushBtn.hidden = !hasBackend;
+    if (disconnectBtn) disconnectBtn.hidden = !hasBackend;
+  }
+
+  async function handleConnectSupabase() {
+    const sbUrlInput = document.getElementById('supabase-url-input');
+    const sbKeyInput = document.getElementById('supabase-key-input');
+    const btn = document.getElementById('test-supabase-btn');
+    const validation = validateSupabaseConfig(sbUrlInput?.value, sbKeyInput?.value);
+
+    if (!validation.ok) {
+      setSheetsInlineFeedback(`<strong>Não foi possível validar:</strong> ${escapeHtml(validation.reason)}`, 'error');
+      showToast(validation.reason, 'error');
+      return;
+    }
+
+    sbUrlInput.value = validation.url;
+    sbKeyInput.value = validation.key;
+    setSheetsInlineFeedback('');
+
+    const oldLabel = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Testando...';
+    try {
+      const payload = await supabaseGetAll(validation.url, validation.key);
+      state.backend = {
+        type: 'supabase',
+        url: validation.url,
+        key: validation.key,
+        source: 'storage'
+      };
+      try {
+        localStorage.setItem(
+          STORAGE_KEYS.supabase,
+          JSON.stringify({ url: validation.url, key: validation.key })
+        );
+      } catch (_) {}
+
+      if (payload.weeks.length > 0 || payload.votes.length > 0) {
+        state.weeks = payload.weeks;
+        state.votes = payload.votes;
+        saveLocalData();
+      }
+      state.connectionStatus = 'connected';
+      state.lastSyncError = '';
+      ensureValidSelectedWeek();
+      renderAll();
+      renderSheetsDialog();
+
+      const emptyNote =
+        payload.weeks.length === 0 && payload.votes.length === 0
+          ? 'As tabelas estão vazias — clique em <strong>↑ Enviar dados locais para o banco</strong> acima para subir Semana 1 e Semana 2.'
+          : `${payload.weeks.length} semana(s) e ${payload.votes.length} avaliação(ões) carregadas. Clique em <strong>Copiar para config.js</strong> para deixar fixo no site para toda a equipe.`;
+
+      setSheetsInlineFeedback(`<strong>✅ Conectado ao Supabase!</strong> ${emptyNote}`, 'success');
+      showToast('Conectado ao Supabase com sucesso!', 'success');
+    } catch (err) {
+      const msg = err && err.message ? err.message : 'Erro desconhecido';
+      const isMissingTables = err && err.code === 'MISSING_TABLES';
+      const tips = isMissingTables
+        ? `
+          <li>Clique em <strong>Copiar SQL (supabase/schema.sql)</strong> abaixo no passo a passo.</li>
+          <li>No painel do Supabase, abra <strong>SQL Editor → New query</strong>, cole o conteúdo e clique em <strong>Run</strong>.</li>
+          <li>Depois volte aqui e clique em <strong>Testar e Conectar Supabase</strong> novamente.</li>
+        `
+        : `
+          <li>Confirme se a <strong>Project URL</strong> é <code>https://seuprojeto.supabase.co</code> (Settings → Data API).</li>
+          <li>Use a <strong>Publishable key</strong> (<code>sb_publishable_...</code>) ou a chave legacy <strong>anon public</strong> (<code>eyJ...</code>).</li>
+          <li>Garanta que você executou o arquivo <code>supabase/schema.sql</code> inteiro no <strong>SQL Editor</strong> (incluindo as políticas RLS).</li>
+        `;
+
+      setSheetsInlineFeedback(
+        `
+          <strong>❌ Falha ao conectar no Supabase (${escapeHtml(msg)})</strong>
+          <ul>${tips}</ul>
+        `,
+        'error'
+      );
+      showToast(`Falha na conexão: ${msg}`, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = oldLabel;
+    }
   }
 
   async function handleConnectSheets() {
@@ -1705,6 +2199,7 @@
     urlInput.value = url;
     setSheetsInlineFeedback('');
 
+    const oldLabel = btn.textContent;
     btn.disabled = true;
     btn.textContent = 'Testando...';
     try {
@@ -1726,7 +2221,7 @@
         }
       }
 
-      state.apiUrl = effectiveUrl;
+      state.backend = { type: 'sheets', url: effectiveUrl, source: 'storage' };
       try {
         localStorage.setItem(STORAGE_KEYS.apiUrl, effectiveUrl);
       } catch (_) {}
@@ -1739,6 +2234,7 @@
       }
       state.connectionStatus = 'connected';
       state.lastSyncError = '';
+      ensureValidSelectedWeek();
       renderAll();
       renderSheetsDialog();
       setSheetsInlineFeedback(
@@ -1755,8 +2251,7 @@
           <strong>❌ Falha na conexão (${escapeHtml(msg)})</strong>
           <ul>
             <li><strong>Verifique a implantação:</strong> em <em>Apps Script → Implantar → Gerenciar implantações</em>, deixe <em>Quem pode acessar</em> como <strong>Qualquer pessoa</strong> (não "Somente eu" nem apenas dentro da empresa).</li>
-            <li><strong>Conta Google Workspace da empresa:</strong> muitas empresas bloqueiam Web Apps públicos na conta corporativa e redirecionam para o login do Google (causando erro CORS / <code>Failed to fetch</code>).</li>
-            <li><strong>Teste rápido:</strong> abra o link abaixo em uma <strong>aba anônima</strong>. Se pedir login do Google em vez de mostrar texto JSON <code>{"ok":true,...}</code>, a conta da empresa bloqueou o acesso público — nesse caso, implante em uma planilha no seu <code>@gmail.com</code> pessoal ou podemos usar Supabase.</li>
+            <li><strong>Conta Google Workspace da empresa:</strong> muitas empresas bloqueiam Web Apps públicos na conta corporativa e redirecionam para o login do Google (causando erro CORS / <code>Failed to fetch</code>). Use o <strong>Supabase</strong> acima como opção mais rápida.</li>
           </ul>
           <div class="inline-feedback-actions">
             <a href="${escapeHtml(testLink)}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-xs">🔎 Abrir URL em nova aba</a>
@@ -1767,32 +2262,76 @@
       showToast(`Falha na conexão: ${msg}`, 'error');
     } finally {
       btn.disabled = false;
-      btn.textContent = 'Testar e Conectar';
+      btn.textContent = oldLabel;
     }
   }
 
-  async function handlePushLocalToSheets() {
-    if (!state.apiUrl) return;
+  async function handlePushLocalToBackend() {
+    if (state.backend.type === 'local') return;
     const btn = document.getElementById('push-local-btn');
+    const backendLabel = getBackendDisplayName();
+    const oldLabel = btn.textContent;
     btn.disabled = true;
     btn.textContent = 'Enviando...';
     try {
-      const res = await apiPost(state.apiUrl, {
-        action: 'syncImport',
-        weeks: state.weeks,
-        votes: state.votes
-      });
+      const res = await backendImportAll(state.weeks, state.votes);
       state.weeks = res.weeks;
       state.votes = res.votes;
+      state.connectionStatus = 'connected';
       saveLocalData();
+      ensureValidSelectedWeek();
       renderAll();
       renderSheetsDialog();
-      showToast('Dados locais sincronizados com a planilha!', 'success');
+      showToast(`Dados locais sincronizados com o ${backendLabel}!`, 'success');
     } catch (err) {
-      showToast(`Erro ao enviar dados: ${err.message}`, 'error');
+      showToast(`Erro ao enviar dados para o ${backendLabel}: ${err.message}`, 'error');
     } finally {
       btn.disabled = false;
-      btn.textContent = '⬆ Enviar dados locais para a planilha';
+      btn.textContent = oldLabel;
+    }
+  }
+
+  async function handleCopySql() {
+    try {
+      const res = await fetch('./supabase/schema.sql', { cache: 'no-store' });
+      if (!res.ok) throw new Error('Arquivo supabase/schema.sql não encontrado');
+      const sql = await res.text();
+      const copied = await copyTextToClipboard(sql);
+      if (!copied) throw new Error('Clipboard indisponível');
+      showToast('SQL das tabelas copiado! Cole no SQL Editor do Supabase e clique em Run.', 'success');
+    } catch (_) {
+      showToast('Abra o arquivo ranking-natalino/supabase/schema.sql para copiar o SQL.', 'info');
+    }
+  }
+
+  async function handleCopyConfigSnippet() {
+    let url = '';
+    let key = '';
+    if (state.backend.type === 'supabase') {
+      url = state.backend.url;
+      key = state.backend.key;
+    } else {
+      const sbUrlInput = document.getElementById('supabase-url-input');
+      const sbKeyInput = document.getElementById('supabase-key-input');
+      const check = validateSupabaseConfig(sbUrlInput?.value, sbKeyInput?.value);
+      if (!check.ok) {
+        showToast(check.reason, 'error');
+        return;
+      }
+      url = check.url;
+      key = check.key;
+    }
+
+    const snippet = [
+      `  SUPABASE_URL: ${JSON.stringify(url)},`,
+      `  SUPABASE_KEY: ${JSON.stringify(key)},`
+    ].join('\n');
+
+    const copied = await copyTextToClipboard(snippet);
+    if (copied) {
+      showToast('Trecho copiado! Cole em ranking-natalino/config.js nas linhas SUPABASE_URL e SUPABASE_KEY.', 'success');
+    } else {
+      showToast('Não foi possível copiar automaticamente; copie manualmente para config.js.', 'info');
     }
   }
 
@@ -1801,7 +2340,8 @@
       const res = await fetch('./apps-script/Code.gs', { cache: 'no-store' });
       if (!res.ok) throw new Error('Arquivo Code.gs não encontrado');
       const code = await res.text();
-      await navigator.clipboard.writeText(code);
+      const copied = await copyTextToClipboard(code);
+      if (!copied) throw new Error('Clipboard indisponível');
       showToast('Código Code.gs copiado para a área de transferência!', 'success');
     } catch (_) {
       showToast('Abra o arquivo ranking-natalino/apps-script/Code.gs para copiar o código.', 'info');
@@ -1867,8 +2407,8 @@
         state.weeks = parsed.weeks;
         state.votes = parsed.votes;
         saveLocalData();
-        if (state.apiUrl) {
-          await handlePushLocalToSheets();
+        if (state.backend.type !== 'local') {
+          await handlePushLocalToBackend();
         } else {
           renderAll();
           showToast('Backup JSON importado com sucesso!', 'success');
@@ -1928,7 +2468,7 @@
     });
 
     document.getElementById('refresh-btn')?.addEventListener('click', () => {
-      syncFromSheets({ silent: false });
+      syncFromBackend({ silent: false });
     });
 
     // Vote Form events
@@ -1956,37 +2496,42 @@
     // Week Modal events
     document.getElementById('week-form')?.addEventListener('submit', handleWeekSave);
 
-    // Sheets Modal events
+    // Backend & Backup Modal events
+    document.getElementById('test-supabase-btn')?.addEventListener('click', handleConnectSupabase);
+    document.getElementById('copy-sql-btn')?.addEventListener('click', handleCopySql);
+    document.getElementById('copy-config-snippet-btn')?.addEventListener('click', handleCopyConfigSnippet);
     document.getElementById('test-connect-btn')?.addEventListener('click', handleConnectSheets);
-    document.getElementById('push-local-btn')?.addEventListener('click', handlePushLocalToSheets);
+    document.getElementById('push-local-btn')?.addEventListener('click', handlePushLocalToBackend);
     document.getElementById('copy-gas-code-btn')?.addEventListener('click', handleCopyGasCode);
 
-    document.getElementById('copy-share-link-btn')?.addEventListener('click', async () => {
-      if (!state.apiUrl) return;
-      const shareUrl = `${window.location.origin}${window.location.pathname}?api=${encodeURIComponent(state.apiUrl)}`;
+    document.getElementById('disconnect-backend-btn')?.addEventListener('click', () => {
       try {
-        await navigator.clipboard.writeText(shareUrl);
-        showToast('Link compartilhável copiado!', 'success');
-      } catch (_) {
-        showToast(shareUrl, 'info');
-      }
-    });
-
-    document.getElementById('disconnect-sheets-btn')?.addEventListener('click', () => {
-      try {
+        localStorage.removeItem(STORAGE_KEYS.supabase);
         localStorage.removeItem(STORAGE_KEYS.apiUrl);
       } catch (_) {}
-      const cfgUrl = String(CONFIG.APPS_SCRIPT_URL || '').trim();
-      state.apiUrl = isValidAppsScriptUrl(cfgUrl) ? cfgUrl : '';
-      state.connectionStatus = state.apiUrl ? 'connected' : 'local';
-      renderAll();
-      renderSheetsDialog();
-      showToast(
-        cfgUrl
-          ? 'Conexão local removida; URL padrão em config.js continua ativa.'
-          : 'Desconectado do Google Sheets neste navegador.',
-        'info'
-      );
+
+      const sbUrlInput = document.getElementById('supabase-url-input');
+      const sbKeyInput = document.getElementById('supabase-key-input');
+      const gasUrlInput = document.getElementById('apps-script-url-input');
+      if (sbUrlInput) sbUrlInput.value = '';
+      if (sbKeyInput) sbKeyInput.value = '';
+      if (gasUrlInput) gasUrlInput.value = '';
+
+      state.backend = resolveInitialBackend();
+      state.lastSyncError = '';
+
+      if (state.backend.type !== 'local') {
+        state.connectionStatus = 'connected';
+        renderAll();
+        renderSheetsDialog();
+        syncFromBackend({ silent: true });
+        showToast('Conexão local removida; configuração padrão de config.js continua ativa.', 'info');
+      } else {
+        state.connectionStatus = 'local';
+        renderAll();
+        renderSheetsDialog();
+        showToast('Desconectado neste navegador (Modo Local ativo).', 'info');
+      }
     });
 
     document.getElementById('export-csv-btn')?.addEventListener('click', exportCsv);
@@ -1999,7 +2544,7 @@
 
     document.getElementById('reset-demo-btn')?.addEventListener('click', () => {
       askConfirmation(
-        'Restaurar os dados iniciais da planilha neste navegador? (Não apaga dados salvos no Google Sheets.)',
+        'Restaurar os dados iniciais da planilha neste navegador? (Não apaga dados salvos na nuvem.)',
         () => {
           const seed = normalizePayload(cloneSeedData());
           state.weeks = seed.weeks;
@@ -2035,13 +2580,13 @@
 
   function init() {
     loadLocalData();
-    state.apiUrl = resolveInitialApiUrl();
+    state.backend = resolveInitialBackend();
     bindEvents();
     buildSlidersOnce();
     renderAll();
 
-    if (state.apiUrl) {
-      syncFromSheets({ silent: true });
+    if (state.backend.type !== 'local') {
+      syncFromBackend({ silent: true });
     }
   }
 
