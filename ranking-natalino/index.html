@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ranking Natalino — Degustação de Chocotones</title>
+  <meta name="description" content="Aplicativo semanal de avaliação e ranking de chocotones da equipe, com notas de 0 a 10 por categoria, dashboard comparativo e integração opcional com Google Sheets." />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%2314452f'/%3E%3Cpath d='M32 10l14 18h-7l10 14H15l10-14h-7L32 10z' fill='%23f5d076'/%3E%3Crect x='28' y='42' width='8' height='10' rx='2' fill='%23c98a2c'/%3E%3Ccircle cx='32' cy='9' r='3' fill='%23b4232c'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="ambient-pattern" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <div class="container header-inner">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 36 36" width="28" height="28" fill="none">
+            <path d="M18 4l9 11h-4.5L29 24H7l6.5-9H9l9-11z" fill="currentColor" opacity="0.95"/>
+            <rect x="15.5" y="24" width="5" height="6.5" rx="1.5" fill="#c98a2c"/>
+            <circle cx="18" cy="4" r="2.3" fill="#b4232c"/>
+          </svg>
+        </div>
+        <div>
+          <h1>Ranking Natalino</h1>
+          <p class="brand-subtitle">Degustação semanal de chocotones</p>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <button type="button" id="sync-status-btn" class="status-pill" aria-label="Configurar sincronização com Google Sheets">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="sync-status-label">Modo Local</span>
+        </button>
+
+        <button type="button" id="refresh-btn" class="btn btn-ghost btn-sm" hidden title="Recarregar notas da planilha">
+          ↻ Atualizar
+        </button>
+
+        <button type="button" id="open-week-modal-btn" class="btn btn-secondary btn-sm">
+          + Nova Semana
+        </button>
+
+        <button type="button" id="quick-vote-btn" class="btn btn-primary btn-sm">
+          ⭐ Dar Nota
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="container">
+    <div id="local-banner" class="info-banner" role="region" aria-label="Aviso de modo de armazenamento" hidden>
+      <div class="info-banner-text">
+        <strong>Modo Local ativo:</strong> as notas iniciais da planilha já estão carregadas aqui no navegador.
+        Para que toda a equipe vote no mesmo ranking compartilhado, conecte direto ao seu Google Sheets.
+      </div>
+      <div class="info-banner-actions">
+        <button type="button" id="banner-connect-btn" class="btn btn-secondary btn-xs">Conectar Google Sheets</button>
+        <button type="button" id="banner-dismiss-btn" class="btn btn-ghost btn-xs" aria-label="Fechar aviso">Fechar</button>
+      </div>
+    </div>
+
+    <nav class="tab-bar" role="tablist" aria-label="Visualizações do ranking">
+      <button
+        type="button"
+        id="tab-dashboard"
+        class="tab-btn is-active"
+        role="tab"
+        aria-selected="true"
+        aria-controls="panel-dashboard"
+        data-tab="dashboard"
+      >
+        📊 Dashboard Geral
+      </button>
+      <button
+        type="button"
+        id="tab-weeks"
+        class="tab-btn"
+        role="tab"
+        aria-selected="false"
+        aria-controls="panel-weeks"
+        data-tab="weeks"
+      >
+        📅 Semanas &amp; Notas
+      </button>
+      <button
+        type="button"
+        id="tab-vote"
+        class="tab-btn"
+        role="tab"
+        aria-selected="false"
+        aria-controls="panel-vote"
+        data-tab="vote"
+      >
+        ⭐ Avaliar Chocotone
+      </button>
+    </nav>
+  </div>
+
+  <main class="container main-content">
+    <!-- ABA 1: DASHBOARD GERAL -->
+    <section id="panel-dashboard" class="tab-panel" role="tabpanel" aria-labelledby="tab-dashboard">
+      <div id="hero-leader-container"></div>
+      <div id="kpi-grid" class="kpi-grid" aria-label="Indicadores gerais"></div>
+
+      <div class="dash-grid-2col">
+        <article class="card">
+          <div class="card-header">
+            <div>
+              <h2>🏆 Ranking Geral</h2>
+              <p class="card-subtitle">Classificação por média geral das 4 categorias</p>
+            </div>
+            <button type="button" class="btn btn-ghost btn-xs" data-action="go-weeks">Ver planilhas →</button>
+          </div>
+          <div id="leaderboard-container"></div>
+        </article>
+
+        <article class="card">
+          <div class="card-header">
+            <div>
+              <h2>🎯 Campeões por Categoria</h2>
+              <p class="card-subtitle">Quem se destacou em cada critério de 0 a 10</p>
+            </div>
+          </div>
+          <div id="category-champions-container"></div>
+        </article>
+      </div>
+
+      <div class="dash-grid-2col">
+        <article class="card">
+          <div class="card-header">
+            <div>
+              <h2>📊 Comparativo por Categoria</h2>
+              <p class="card-subtitle">Desempenho lado a lado em Sabor, Recheio, Maciez e Doçura</p>
+            </div>
+          </div>
+          <div id="category-chart-container" class="chart-wrapper"></div>
+        </article>
+
+        <article class="card">
+          <div class="card-header">
+            <div>
+              <h2>📈 Evolução das Semanas</h2>
+              <p class="card-subtitle">Média geral e quantidade de avaliadores por semana</p>
+            </div>
+          </div>
+          <div id="trend-chart-container" class="chart-wrapper"></div>
+        </article>
+      </div>
+
+      <article class="card">
+        <div class="card-header">
+          <div>
+            <h2>👥 Painel dos Avaliadores</h2>
+            <p class="card-subtitle">Participação, média atribuída e chocotone favorito de cada pessoa</p>
+          </div>
+        </div>
+        <div id="evaluators-container"></div>
+      </article>
+    </section>
+
+    <!-- ABA 2: SEMANAS & NOTAS -->
+    <section id="panel-weeks" class="tab-panel" role="tabpanel" aria-labelledby="tab-weeks" hidden>
+      <div class="weeks-toolbar">
+        <div id="week-pills" class="week-pills" role="group" aria-label="Selecionar semana"></div>
+        <button type="button" id="weeks-add-btn" class="btn btn-secondary btn-sm">+ Nova Semana</button>
+      </div>
+      <div id="weeks-content"></div>
+    </section>
+
+    <!-- ABA 3: DAR NOTA -->
+    <section id="panel-vote" class="tab-panel" role="tabpanel" aria-labelledby="tab-vote" hidden>
+      <div class="vote-layout">
+        <form id="vote-form" class="card vote-card" novalidate>
+          <div class="vote-card-header">
+            <div>
+              <h2>⭐ Avaliar Chocotone</h2>
+              <p class="card-subtitle">Sem login: escolha a semana, coloque seu nome e dê notas de 0 a 10.</p>
+            </div>
+            <div class="live-avg-box" aria-live="polite">
+              <span class="live-avg-label">Sua média</span>
+              <strong id="live-vote-avg" class="live-avg-value">7,00</strong>
+            </div>
+          </div>
+
+          <div class="form-row-2col">
+            <div class="field-group">
+              <div class="field-label-row">
+                <label for="vote-week">Semana / Chocotone</label>
+                <button type="button" id="inline-new-week-btn" class="link-btn">+ Cadastrar semana</button>
+              </div>
+              <select id="vote-week" name="week" required></select>
+            </div>
+
+            <div class="field-group">
+              <label for="vote-person">Seu nome</label>
+              <input
+                type="text"
+                id="vote-person"
+                name="person"
+                list="known-people-list"
+                placeholder="Ex.: André, Ana, João..."
+                maxlength="60"
+                autocomplete="name"
+                required
+              />
+              <datalist id="known-people-list"></datalist>
+            </div>
+          </div>
+
+          <div class="quick-names-wrap">
+            <span class="quick-names-label">Participantes frequentes (clique para preencher):</span>
+            <div id="person-quick-chips" class="quick-chips"></div>
+          </div>
+
+          <div id="existing-vote-notice" class="notice-inline" hidden>
+            <span>✏️ Você já avaliou esta semana — as suas notas atuais foram carregadas para edição.</span>
+          </div>
+
+          <div id="sliders-grid" class="sliders-grid"></div>
+
+          <div class="field-group">
+            <label for="vote-comment">Comentário de degustação <span class="optional-tag">(opcional)</span></label>
+            <input
+              type="text"
+              id="vote-comment"
+              name="comment"
+              placeholder="Ex.: Massa super macia, mas poderia ter mais recheio..."
+              maxlength="240"
+            />
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" id="submit-vote-btn" class="btn btn-primary btn-lg">
+              Salvar Avaliação
+            </button>
+            <button type="button" id="reset-vote-btn" class="btn btn-ghost">
+              Limpar notas
+            </button>
+          </div>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer container">
+    <p>
+      Ranking Natalino de Chocotones • Feito para a degustação semanal da equipe
+      • <button type="button" id="footer-config-btn" class="link-btn">Configurar Google Sheets / Backup</button>
+    </p>
+  </footer>
+
+  <!-- MODAL: CADASTRAR / EDITAR SEMANA -->
+  <dialog id="week-dialog" class="modal-dialog" aria-labelledby="week-dialog-title">
+    <form id="week-form" class="modal-content" method="dialog">
+      <div class="modal-header">
+        <h3 id="week-dialog-title">Nova Semana de Degustação</h3>
+        <button type="button" class="icon-close-btn" data-close-dialog="week-dialog" aria-label="Fechar">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row-2col">
+          <div class="field-group">
+            <label for="week-number-input">Número da semana</label>
+            <input type="number" id="week-number-input" min="1" max="52" required />
+          </div>
+          <div class="field-group">
+            <label for="week-brand-input">Marca <span class="optional-tag">(opcional)</span></label>
+            <input type="text" id="week-brand-input" placeholder="Ex.: Cacau Show, Bauducco, Ofner" maxlength="80" />
+          </div>
+        </div>
+
+        <div class="field-group">
+          <label for="week-chocotone-input">Nome do Chocotone</label>
+          <input type="text" id="week-chocotone-input" placeholder="Ex.: Cacau Show LaCreme 500g" maxlength="120" required />
+        </div>
+
+        <div class="field-group">
+          <label for="week-notes-input">Observações <span class="optional-tag">(opcional)</span></label>
+          <input type="text" id="week-notes-input" placeholder="Ex.: Avelã trufado • R$ 79,90" maxlength="200" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" data-close-dialog="week-dialog">Cancelar</button>
+        <button type="submit" id="save-week-btn" class="btn btn-primary">Salvar Semana</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- MODAL: GOOGLE SHEETS & BACKUP -->
+  <dialog id="sheets-dialog" class="modal-dialog modal-dialog-lg" aria-labelledby="sheets-dialog-title">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <h3 id="sheets-dialog-title">🔗 Conectar ao Google Sheets &amp; Backup</h3>
+          <p class="card-subtitle">Use a sua própria planilha como banco de dados gratuito e em tempo real.</p>
+        </div>
+        <button type="button" class="icon-close-btn" data-close-dialog="sheets-dialog" aria-label="Fechar">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="setup-status-card" id="modal-connection-card"></div>
+
+        <div class="field-group">
+          <label for="apps-script-url-input">URL do Web App (Google Apps Script)</label>
+          <div class="input-with-btn">
+            <input
+              type="url"
+              id="apps-script-url-input"
+              placeholder="https://script.google.com/macros/s/.../exec"
+            />
+            <button type="button" id="test-connect-btn" class="btn btn-primary">Testar e Conectar</button>
+          </div>
+          <p class="field-help">
+            Dica: depois de testar, cole essa mesma URL no arquivo <code>ranking-natalino/config.js</code> (em <code>APPS_SCRIPT_URL</code>) para que todo mundo da empresa acesse já conectado.
+          </p>
+        </div>
+
+        <div class="modal-actions-grid">
+          <button type="button" id="push-local-btn" class="btn btn-secondary btn-sm" hidden>
+            ⬆ Enviar dados locais para a planilha
+          </button>
+          <button type="button" id="copy-share-link-btn" class="btn btn-secondary btn-sm" hidden>
+            🔗 Copiar link com conexão (?api=...)
+          </button>
+          <button type="button" id="disconnect-sheets-btn" class="btn btn-ghost btn-sm" hidden>
+            Desconectar neste navegador
+          </button>
+        </div>
+
+        <details class="setup-steps" open>
+          <summary>Passo a passo (leva menos de 2 minutos)</summary>
+          <ol>
+            <li>Abra sua planilha no <strong>Google Sheets</strong> e clique em <strong>Extensões → Apps Script</strong>.</li>
+            <li>Apague o conteúdo padrão, clique no botão abaixo para copiar o código pronto e cole no editor.</li>
+            <li>Clique em <strong>Implantar → Nova implantação → Tipo: App da Web</strong>.</li>
+            <li>Em <em>Executar como</em> deixe <strong>Eu</strong>; em <em>Quem pode acessar</em> escolha <strong>Qualquer pessoa</strong>.</li>
+            <li>Autorize, copie a URL terminada em <code>/exec</code> e cole acima!</li>
+          </ol>
+          <div class="setup-steps-actions">
+            <button type="button" id="copy-gas-code-btn" class="btn btn-secondary btn-sm">
+              📋 Copiar código do Apps Script (Code.gs)
+            </button>
+          </div>
+        </details>
+
+        <hr class="divider" />
+
+        <div class="backup-section">
+          <h4>Exportar / Backup</h4>
+          <div class="backup-actions">
+            <button type="button" id="export-csv-btn" class="btn btn-secondary btn-sm">⬇ Baixar CSV (Excel)</button>
+            <button type="button" id="export-json-btn" class="btn btn-secondary btn-sm">⬇ Baixar JSON</button>
+            <label class="btn btn-secondary btn-sm file-upload-btn">
+              ⬆ Importar JSON
+              <input type="file" id="import-json-input" accept="application/json,.json" hidden />
+            </label>
+            <button type="button" id="reset-demo-btn" class="btn btn-ghost btn-sm danger-text">Restaurar dados iniciais</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- MODAL: CONFIRMAÇÃO -->
+  <dialog id="confirm-dialog" class="modal-dialog modal-dialog-sm" aria-labelledby="confirm-dialog-title">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="confirm-dialog-title">Confirmar ação</h3>
+        <button type="button" class="icon-close-btn" data-close-dialog="confirm-dialog" aria-label="Fechar">✕</button>
+      </div>
+      <div class="modal-body">
+        <p id="confirm-dialog-message"></p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-ghost" data-close-dialog="confirm-dialog">Cancelar</button>
+        <button type="button" id="confirm-dialog-ok" class="btn btn-danger">Confirmar</button>
+      </div>
+    </div>
+  </dialog>
+
+  <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+  <script src="./config.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
