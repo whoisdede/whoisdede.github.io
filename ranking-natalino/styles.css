@@ -1464,6 +1464,51 @@ dialog.modal-dialog::backdrop {
   border-color: rgba(20, 69, 47, 0.3);
 }
 
+.inline-feedback {
+  margin-top: 8px;
+  padding: 11px 14px;
+  border-radius: 10px;
+  font-size: 0.84rem;
+  line-height: 1.45;
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+}
+
+.inline-feedback.is-error {
+  background: var(--cranberry-soft);
+  border-color: rgba(180, 35, 44, 0.35);
+  color: #7c181f;
+}
+
+.inline-feedback.is-success {
+  background: var(--pine-soft);
+  border-color: rgba(20, 69, 47, 0.35);
+  color: var(--pine);
+}
+
+.inline-feedback ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+}
+
+.inline-feedback-actions {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.toast-region[popover] {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  inset: auto 18px 18px auto;
+  overflow: visible;
+}
+
 .input-with-btn {
   display: flex;
   gap: 8px;

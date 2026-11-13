@@ -86,14 +86,55 @@
     return values.reduce((acc, v) => acc + v, 0) / values.length;
   }
 
-  function isValidAppsScriptUrl(url) {
-    if (!url) return false;
-    try {
-      const parsed = new URL(url.trim());
-      return parsed.protocol === 'https:' && parsed.hostname === 'script.google.com';
-    } catch (_) {
-      return false;
+  function normalizeAppsScriptUrl(rawUrl) {
+    let url = String(rawUrl || '').trim();
+    if (!url) return '';
+    // Remove prefixo multi-conta (/macros/u/0/s/ -> /macros/s/)
+    url = url.replace(/\/macros\/u\/\d+\/s\//i, '/macros/s/');
+    url = url.replace(/\/a\/macros\/([^/]+)\/u\/\d+\/s\//i, '/a/macros/$1/s/');
+    return url;
+  }
+
+  function validateAppsScriptUrl(rawUrl) {
+    const url = normalizeAppsScriptUrl(rawUrl);
+    if (!url) {
+      return { ok: false, url: '', reason: 'Cole a URL do Web App antes de testar.' };
     }
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch (_) {
+      return { ok: false, url, reason: 'URL inválida. Verifique se copiou o link completo começando com https://.' };
+    }
+    if (parsed.protocol !== 'https:') {
+      return { ok: false, url, reason: 'A URL precisa começar com https://.' };
+    }
+    if (parsed.hostname === 'docs.google.com') {
+      return {
+        ok: false,
+        url,
+        reason: 'Essa é a URL da planilha, não do Web App. Vá em Extensões → Apps Script → Implantar → App da Web e copie a URL terminada em /exec.'
+      };
+    }
+    if (parsed.hostname !== 'script.google.com') {
+      return {
+        ok: false,
+        url,
+        reason: 'A URL deve pertencer a script.google.com (terminada em /exec).'
+      };
+    }
+    if (/\/dev(\?|$)/i.test(parsed.pathname)) {
+      return {
+        ok: false,
+        url,
+        reason: 'Você colou a URL de teste (/dev). Use a URL da implantação final terminada em /exec.'
+      };
+    }
+    return { ok: true, url };
+  }
+
+  function isValidAppsScriptUrl(url) {
+    return validateAppsScriptUrl(url).ok;
   }
 
   function normalizePayload(raw) {
@@ -193,16 +234,37 @@
     return '';
   }
 
-  async function apiGetAll(url) {
+  async function apiGetAllSingle(url) {
     const sep = url.includes('?') ? '&' : '?';
     const res = await fetch(`${url}${sep}action=getAll&_ts=${Date.now()}`, {
-      method: 'GET',
-      cache: 'no-store'
+      method: 'GET'
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (_) {
+      throw new Error('A URL não retornou JSON válido (verifique se ela termina em /exec e está liberada para "Qualquer pessoa").');
+    }
     if (!data || !data.ok) throw new Error((data && data.error) || 'Resposta inválida da planilha');
-    return normalizePayload(data);
+    return { payload: normalizePayload(data), effectiveUrl: url };
+  }
+
+  async function apiGetAll(url) {
+    const cleanUrl = normalizeAppsScriptUrl(url);
+    try {
+      const { payload } = await apiGetAllSingle(cleanUrl);
+      return payload;
+    } catch (err) {
+      // Se for URL Workspace (/a/macros/dominio/s/...), tenta também a rota padrão /macros/s/...
+      if (/\/a\/macros\/[^/]+\/s\//i.test(cleanUrl)) {
+        const altUrl = cleanUrl.replace(/\/a\/macros\/[^/]+\/s\//i, '/macros/s/');
+        const { payload } = await apiGetAllSingle(altUrl);
+        return payload;
+      }
+      throw err;
+    }
   }
 
   async function apiPost(url, payload) {
@@ -378,12 +440,26 @@
   function showToast(message, type = 'info') {
     const region = document.getElementById('toast-region');
     if (!region) return;
+    if (typeof region.showPopover === 'function') {
+      try {
+        if (!region.hasAttribute('popover')) region.setAttribute('popover', 'manual');
+        if (region.matches(':popover-open') && document.querySelector('dialog[open]')) {
+          region.hidePopover();
+        }
+        if (!region.matches(':popover-open')) region.showPopover();
+      } catch (_) {}
+    }
     const el = document.createElement('div');
     el.className = `toast is-${type}`;
     el.textContent = message;
     region.appendChild(el);
     window.setTimeout(() => {
       el.remove();
+      if (!region.children.length && typeof region.hidePopover === 'function') {
+        try {
+          if (region.matches(':popover-open')) region.hidePopover();
+        } catch (_) {}
+      }
     }, 4200);
   }
 
@@ -1571,6 +1647,20 @@
   }
 
   // ---------- Sheets & Backup Modal ----------
+  function setSheetsInlineFeedback(html, type = 'info') {
+    const box = document.getElementById('sheets-inline-feedback');
+    if (!box) return;
+    if (!html) {
+      box.hidden = true;
+      box.innerHTML = '';
+      box.className = 'inline-feedback';
+      return;
+    }
+    box.hidden = false;
+    box.className = `inline-feedback is-${type}`;
+    box.innerHTML = html;
+  }
+
   function renderSheetsDialog() {
     const statusCard = document.getElementById('modal-connection-card');
     const urlInput = document.getElementById('apps-script-url-input');
@@ -1579,6 +1669,7 @@
     const disconnectBtn = document.getElementById('disconnect-sheets-btn');
 
     if (urlInput) urlInput.value = state.apiUrl || '';
+    setSheetsInlineFeedback('');
 
     if (statusCard) {
       if (state.apiUrl && state.connectionStatus === 'connected') {
@@ -1602,20 +1693,42 @@
   async function handleConnectSheets() {
     const urlInput = document.getElementById('apps-script-url-input');
     const btn = document.getElementById('test-connect-btn');
-    const url = (urlInput.value || '').trim();
+    const validation = validateAppsScriptUrl(urlInput.value);
 
-    if (!isValidAppsScriptUrl(url)) {
-      showToast('Cole uma URL válida do Google Apps Script (https://script.google.com/macros/s/.../exec).', 'error');
+    if (!validation.ok) {
+      setSheetsInlineFeedback(`<strong>Não foi possível validar a URL:</strong> ${escapeHtml(validation.reason)}`, 'error');
+      showToast(validation.reason, 'error');
       return;
     }
+
+    const url = validation.url;
+    urlInput.value = url;
+    setSheetsInlineFeedback('');
 
     btn.disabled = true;
     btn.textContent = 'Testando...';
     try {
-      const payload = await apiGetAll(url);
-      state.apiUrl = url;
+      let effectiveUrl = url;
+      let payload;
       try {
-        localStorage.setItem(STORAGE_KEYS.apiUrl, url);
+        const res = await apiGetAllSingle(url);
+        payload = res.payload;
+        effectiveUrl = res.effectiveUrl;
+      } catch (firstErr) {
+        if (/\/a\/macros\/[^/]+\/s\//i.test(url)) {
+          const altUrl = url.replace(/\/a\/macros\/[^/]+\/s\//i, '/macros/s/');
+          const res = await apiGetAllSingle(altUrl);
+          payload = res.payload;
+          effectiveUrl = res.effectiveUrl;
+          urlInput.value = effectiveUrl;
+        } else {
+          throw firstErr;
+        }
+      }
+
+      state.apiUrl = effectiveUrl;
+      try {
+        localStorage.setItem(STORAGE_KEYS.apiUrl, effectiveUrl);
       } catch (_) {}
 
       // Se a planilha retornou dados, atualiza localmente (se vazia, preserva local para o usuário poder enviar)
@@ -1628,9 +1741,30 @@
       state.lastSyncError = '';
       renderAll();
       renderSheetsDialog();
+      setSheetsInlineFeedback(
+        `<strong>✅ Conectado com sucesso!</strong> Agora todas as notas são salvas direto na planilha.`,
+        'success'
+      );
       showToast('Conectado ao Google Sheets com sucesso!', 'success');
     } catch (err) {
-      showToast(`Falha na conexão: ${err.message}`, 'error');
+      const msg = err && err.message ? err.message : 'Erro desconhecido';
+      const sep = url.includes('?') ? '&' : '?';
+      const testLink = `${url}${sep}action=getAll`;
+      setSheetsInlineFeedback(
+        `
+          <strong>❌ Falha na conexão (${escapeHtml(msg)})</strong>
+          <ul>
+            <li><strong>Verifique a implantação:</strong> em <em>Apps Script → Implantar → Gerenciar implantações</em>, deixe <em>Quem pode acessar</em> como <strong>Qualquer pessoa</strong> (não "Somente eu" nem apenas dentro da empresa).</li>
+            <li><strong>Conta Google Workspace da empresa:</strong> muitas empresas bloqueiam Web Apps públicos na conta corporativa e redirecionam para o login do Google (causando erro CORS / <code>Failed to fetch</code>).</li>
+            <li><strong>Teste rápido:</strong> abra o link abaixo em uma <strong>aba anônima</strong>. Se pedir login do Google em vez de mostrar texto JSON <code>{"ok":true,...}</code>, a conta da empresa bloqueou o acesso público — nesse caso, implante em uma planilha no seu <code>@gmail.com</code> pessoal ou podemos usar Supabase.</li>
+          </ul>
+          <div class="inline-feedback-actions">
+            <a href="${escapeHtml(testLink)}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-xs">🔎 Abrir URL em nova aba</a>
+          </div>
+        `,
+        'error'
+      );
+      showToast(`Falha na conexão: ${msg}`, 'error');
     } finally {
       btn.disabled = false;
       btn.textContent = 'Testar e Conectar';
