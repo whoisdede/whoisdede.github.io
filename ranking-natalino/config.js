@@ -14,8 +14,8 @@ window.RANKING_CONFIG = {
   // Configuração principal (Supabase)
   // Exemplo URL: 'https://abcdefg.supabase.co'
   // Exemplo Key: 'sb_publishable_...' ou 'eyJhbGci...'
-  SUPABASE_URL: '',
-  SUPABASE_KEY: '',
+  SUPABASE_URL: 'https://kzeulutemeidwwhtshto.supabase.co',
+  SUPABASE_KEY: 'sb_publishable_mDoHmzR-0qlIulV_6mGZQg_fHbZCm98',
 
   // Opcional (alternativa via Google Sheets Apps Script /exec)
   APPS_SCRIPT_URL: '',
